@@ -1,4 +1,4 @@
-"""Legacy SKU Migration Scope plugin for az-scout.
+"""VM SKU Modernization plugin for az-scout.
 
 Provides an inventory of legacy SKU VMs (v2-v5) that are in scope for
 v6/v7 SKU-family migration planning, with enriched metadata per VM.
@@ -22,10 +22,10 @@ except PackageNotFoundError:
 
 
 class VmMigrationScopePlugin:
-    """External plugin: VM v6/v7 SKU Migration Scope dashboard."""
+    """External plugin: VM SKU Modernization dashboard."""
 
     name = "vm-migration-scope"
-    display_name = "SKU Migration Scope"
+    display_name = "VM SKU Modernization"
     version = __version__
     description = (
         "Inventory of legacy SKU VMs (v2-v5) in scope for v6/v7 SKU-family migration planning."
@@ -48,7 +48,7 @@ class VmMigrationScopePlugin:
         return [
             TabDefinition(
                 id="vm-migration-scope",
-                label="SKU Migration Scope",
+                label="VM SKU Modernization",
                 icon="bi bi-arrow-up-circle",
                 js_entry="js/vm-migration-scope-tab.js",
                 css_entry="css/vm-migration-scope.css",

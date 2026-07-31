@@ -25,6 +25,7 @@ _V2_TO_V5_RE = re.compile(r"_v[2-5][a-z]*(_promo)?$", re.IGNORECASE)
 _GEN2_IMAGE_MARKERS = ("gen2", "-g2", "2gen")
 
 _ARM_API_VERSION = "2024-07-01"
+_NIC_API_VERSION = "2024-05-01"
 
 
 def _parse_resource_group(resource_id: str) -> str:
@@ -79,6 +80,9 @@ def _build_vm_record(
     storage = props.get("storageProfile", {})
     image_ref = storage.get("imageReference", {})
     os_disk = storage.get("osDisk", {})
+    security_profile = props.get("securityProfile", {})
+    uefi_settings = security_profile.get("uefiSettings", {})
+    additional_caps = props.get("additionalCapabilities", {})
 
     return {
         "name": vm.get("name", ""),
@@ -92,6 +96,19 @@ def _build_vm_record(
         "image_publisher": image_ref.get("publisher", ""),
         "disk_controller_type": os_disk.get("diskControllerType", "SCSI"),
         "zones": vm.get("zones", []),
+        # Security profile
+        "security_type": security_profile.get("securityType", "Standard"),
+        "secure_boot_enabled": uefi_settings.get("secureBootEnabled", False),
+        "vtpm_enabled": uefi_settings.get("vTpmEnabled", False),
+        # Image identity
+        "image_offer": image_ref.get("offer", ""),
+        "image_gallery_id": image_ref.get("id", ""),
+        # Storage
+        "data_disk_count": len(storage.get("dataDisks", [])),
+        "os_disk_size_gb": os_disk.get("diskSizeGB") or 0,
+        # Features
+        "hibernation_enabled": additional_caps.get("hibernationEnabled", False),
+        "license_type": props.get("licenseType", ""),
     }
 
 
@@ -163,3 +180,82 @@ async def get_migration_vms(
         results.extend(items)
 
     return JSONResponse(results)
+
+
+def _fetch_vm_deep_check(
+    sub_id: str,
+    resource_group: str,
+    vm_name: str,
+    tenant_id: str | None,
+) -> dict[str, Any]:
+    """Fetch VM instanceView (power state / hibernation) and NIC accelerated networking."""
+    vm_url = (
+        f"https://management.azure.com/subscriptions/{sub_id}"
+        f"/resourceGroups/{resource_group}/providers/Microsoft.Compute"
+        f"/virtualMachines/{vm_name}"
+    )
+    vm_data = azure_api.arm_get(
+        vm_url,
+        params={"api-version": _ARM_API_VERSION, "$expand": "instanceView"},
+        tenant_id=tenant_id,
+    )
+
+    result: dict[str, Any] = {}
+
+    # Power state from instanceView statuses
+    instance_view = vm_data.get("properties", {}).get("instanceView", {})
+    statuses = instance_view.get("statuses", [])
+    power_code = next(
+        (s.get("code", "") for s in statuses if s.get("code", "").startswith("PowerState/")),
+        "PowerState/unknown",
+    )
+    result["power_state"] = power_code.removeprefix("PowerState/")
+    result["is_hibernated"] = power_code == "PowerState/hibernated"
+
+    # NIC accelerated networking (check up to 3 NICs)
+    nics = vm_data.get("properties", {}).get("networkProfile", {}).get("networkInterfaces", [])
+    nic_ids = [nic.get("id", "") for nic in nics if nic.get("id")]
+    accel_results: list[bool] = []
+    for nic_id in nic_ids[:3]:
+        try:
+            nic_data = azure_api.arm_get(
+                f"https://management.azure.com{nic_id}",
+                params={"api-version": _NIC_API_VERSION},
+                tenant_id=tenant_id,
+            )
+            accel_results.append(
+                bool(nic_data.get("properties", {}).get("enableAcceleratedNetworking", False))
+            )
+        except Exception:
+            logger.debug("Could not fetch NIC %s — skipping", nic_id)
+
+    if accel_results:
+        result["accelerated_networking_enabled"] = all(accel_results)
+        result["accelerated_networking_nics_checked"] = len(accel_results)
+    else:
+        result["accelerated_networking_enabled"] = None
+        result["accelerated_networking_nics_checked"] = 0
+
+    return result
+
+
+@router.get(
+    "/vm-deep-check",
+    summary="Deep check a single VM: instanceView (power state) + NIC accelerated networking",
+)
+async def get_vm_deep_check(
+    subscriptionId: str = Query(..., description="Subscription ID"),  # noqa: N803
+    resourceGroup: str = Query(..., description="Resource group name"),  # noqa: N803
+    vmName: str = Query(..., description="VM name"),  # noqa: N803
+    tenantId: str | None = Query(None, description="Optional tenant ID"),  # noqa: N803
+) -> JSONResponse:
+    """Fetch VM instanceView (power state, hibernation) and NIC accelerated networking status."""
+    try:
+        result = await asyncio.to_thread(
+            _fetch_vm_deep_check, subscriptionId, resourceGroup, vmName, tenantId
+        )
+    except ArmAuthorizationError:
+        return JSONResponse({"error": "Authorization error for this VM"}, status_code=403)
+    except ArmRequestError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    return JSONResponse(result)
