@@ -9,11 +9,11 @@
 // Bootstrap – load the HTML fragment into the tab container
 // ---------------------------------------------------------------------------
 (async function initVmMigrationTab() {
-    const pluginBase = "/plugins/vm-migration-scope";
-    const container = document.getElementById("plugin-tab-vm-migration-scope");
+    const pluginBase = "/plugins/vm-sku-modernization";
+    const container = document.getElementById("plugin-tab-vm-sku-modernization");
     if (!container) return;
     try {
-        const resp = await fetch(`${pluginBase}/static/html/vm-migration-scope-tab.html`);
+        const resp = await fetch(`${pluginBase}/static/html/vm-sku-modernization-tab.html`);
         if (resp.ok) container.innerHTML = await resp.text();
     } catch { /* template already inline */ }
 
@@ -1319,7 +1319,7 @@ async function vmmRunFullCheck() {
     if (labelEl) labelEl.textContent = "(in progress)";
 
     try {
-        const url = `/plugins/vm-migration-scope/vm-deep-check`
+        const url = `/plugins/vm-sku-modernization/vm-deep-check`
             + `?subscriptionId=${encodeURIComponent(vm.subscription_id)}`
             + `&resourceGroup=${encodeURIComponent(vm.resource_group)}`
             + `&vmName=${encodeURIComponent(vm.name)}`
@@ -1357,7 +1357,7 @@ async function vmmLoad() {
     vmmDeepCheckState.clear();
 
     const subIds = [...vmmSelectedSubs].join(",");
-    const url = `/plugins/vm-migration-scope/vms?subscriptions=${encodeURIComponent(subIds)}${tenantQS()}`;
+    const url = `/plugins/vm-sku-modernization/vms?subscriptions=${encodeURIComponent(subIds)}${tenantQS()}`;
 
     try {
         const data = await apiFetch(url);

@@ -1,4 +1,4 @@
-# Copilot Instructions for az-scout-plugin-vm-migration-scope
+# Copilot Instructions for az-scout-plugin-vm-sku-modernization
 
 ## Project overview
 
@@ -14,17 +14,17 @@ This is an **az-scout plugin** — a Python package that extends [az-scout](http
 ## Project structure
 
 ```
-src/az_scout_vm_migration_scope/
+src/az_scout_vm_sku_modernization/
 ├── __init__.py          # Plugin class + module-level `plugin` instance
-├── routes.py            # FastAPI APIRouter (mounted at /plugins/vm-migration-scope/)
+├── routes.py            # FastAPI APIRouter (mounted at /plugins/vm-sku-modernization/)
 ├── tools.py             # MCP tool functions (exposed on the az-scout MCP server)
 └── static/
     ├── css/
-    │   └── vm-migration-scope.css      # Plugin styles (auto-loaded via css_entry)
+    │   └── vm-sku-modernization.css      # Plugin styles (auto-loaded via css_entry)
     ├── html/
-    │   └── vm-migration-scope-tab.html # HTML fragment (fetched by JS at runtime)
+    │   └── vm-sku-modernization-tab.html # HTML fragment (fetched by JS at runtime)
     └── js/
-        └── vm-migration-scope-tab.js   # Tab UI logic (auto-loaded via js_entry)
+        └── vm-sku-modernization-tab.js   # Tab UI logic (auto-loaded via js_entry)
 ```
 
 ## Plugin API
@@ -43,7 +43,7 @@ The entry point in `pyproject.toml` connects the plugin to az-scout:
 
 ```toml
 [project.entry-points."az_scout.plugins"]
-vm_migration_scope = "az_scout_vm_migration_scope:plugin"
+vm_sku_modernization = "az_scout_vm_sku_modernization:plugin"
 ```
 
 ## Code conventions

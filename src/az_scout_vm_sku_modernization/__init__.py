@@ -16,15 +16,15 @@ from fastapi import APIRouter
 _STATIC_DIR = Path(__file__).parent / "static"
 
 try:
-    __version__ = _pkg_version("az-scout-plugin-vm-migration-scope")
+    __version__ = _pkg_version("az-scout-plugin-vm-sku-modernization")
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
 
-class VmMigrationScopePlugin:
+class VmSkuModernizationPlugin:
     """External plugin: VM SKU Modernization dashboard."""
 
-    name = "vm-migration-scope"
+    name = "vm-sku-modernization"
     display_name = "VM SKU Modernization"
     version = __version__
     description = (
@@ -32,12 +32,12 @@ class VmMigrationScopePlugin:
     )
 
     def get_router(self) -> APIRouter | None:
-        from az_scout_vm_migration_scope.routes import router
+        from az_scout_vm_sku_modernization.routes import router
 
         return router
 
     def get_mcp_tools(self) -> list[Callable[..., Any]] | None:
-        from az_scout_vm_migration_scope.tools import list_migration_candidate_vms
+        from az_scout_vm_sku_modernization.tools import list_migration_candidate_vms
 
         return [list_migration_candidate_vms]
 
@@ -47,11 +47,11 @@ class VmMigrationScopePlugin:
     def get_tabs(self) -> list[TabDefinition] | None:
         return [
             TabDefinition(
-                id="vm-migration-scope",
+                id="vm-sku-modernization",
                 label="VM SKU Modernization",
                 icon="bi bi-arrow-up-circle",
-                js_entry="js/vm-migration-scope-tab.js",
-                css_entry="css/vm-migration-scope.css",
+                js_entry="js/vm-sku-modernization-tab.js",
+                css_entry="css/vm-sku-modernization.css",
             )
         ]
 
@@ -62,4 +62,4 @@ class VmMigrationScopePlugin:
         return None
 
 
-plugin: AzScoutPlugin = VmMigrationScopePlugin()
+plugin: AzScoutPlugin = VmSkuModernizationPlugin()

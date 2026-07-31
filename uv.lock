@@ -111,7 +111,7 @@ wheels = [
 ]
 
 [[package]]
-name = "az-scout-plugin-vm-migration-scope"
+name = "az-scout-plugin-vm-sku-modernization"
 source = { editable = "." }
 dependencies = [
     { name = "az-scout" },
