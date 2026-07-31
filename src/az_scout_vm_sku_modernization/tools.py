@@ -1,4 +1,4 @@
-"""MCP tools for the VM v6/v7 Migration Scope plugin."""
+"""MCP tools for the VM SKU Modernization plugin."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from az_scout import azure_api
 from pydantic import Field
 
-from az_scout_vm_migration_scope.routes import _fetch_vms_for_subscription
+from az_scout_vm_sku_modernization.routes import _fetch_vms_for_subscription
 
 
 def list_migration_candidate_vms(

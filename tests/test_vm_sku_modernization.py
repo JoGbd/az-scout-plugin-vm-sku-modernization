@@ -3,8 +3,8 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from az_scout_vm_migration_scope import plugin
-from az_scout_vm_migration_scope.routes import _is_migration_candidate, router
+from az_scout_vm_sku_modernization import plugin
+from az_scout_vm_sku_modernization.routes import _is_migration_candidate, router
 
 _app = FastAPI()
 _app.include_router(router)
@@ -12,7 +12,7 @@ client = TestClient(_app)
 
 
 def test_plugin_metadata() -> None:
-    assert plugin.name == "vm-migration-scope"
+    assert plugin.name == "vm-sku-modernization"
     assert plugin.get_router() is not None
     assert plugin.get_mcp_tools() is not None
     assert plugin.get_tabs() is not None
@@ -28,7 +28,7 @@ def test_migration_candidate_regex() -> None:
 
 def test_vm_record_enriched_fields() -> None:
     """_build_vm_record must include new security / image / disk fields."""
-    from az_scout_vm_migration_scope.routes import _build_vm_record
+    from az_scout_vm_sku_modernization.routes import _build_vm_record
 
     arm_vm = {
         "name": "my-vm",
@@ -73,7 +73,7 @@ def test_deep_check_route_auth_error() -> None:
     from az_scout.azure_api import ArmAuthorizationError
 
     with patch(
-        "az_scout_vm_migration_scope.routes._fetch_vm_deep_check",
+        "az_scout_vm_sku_modernization.routes._fetch_vm_deep_check",
         side_effect=ArmAuthorizationError("no access"),
     ):
         resp = client.get(
@@ -92,7 +92,7 @@ def test_deep_check_route_success() -> None:
         "accelerated_networking_nics_checked": 1,
     }
     with patch(
-        "az_scout_vm_migration_scope.routes._fetch_vm_deep_check",
+        "az_scout_vm_sku_modernization.routes._fetch_vm_deep_check",
         return_value=fake_result,
     ):
         resp = client.get(

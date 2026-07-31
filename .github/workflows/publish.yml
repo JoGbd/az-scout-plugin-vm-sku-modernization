@@ -55,7 +55,7 @@ jobs:
     environment:
       name: pypi
       # Update the URL below to match your PyPI package name
-      url: https://pypi.org/p/az-scout-plugin-vm-migration-scope
+      url: https://pypi.org/p/az-scout-plugin-vm-sku-modernization
     permissions:
       id-token: write  # trusted publishing (OIDC)
     steps:

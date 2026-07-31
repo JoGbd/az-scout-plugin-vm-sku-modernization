@@ -1,4 +1,4 @@
-"""API routes for the VM v6/v7 Migration Scope plugin."""
+"""API routes for the VM SKU Modernization plugin."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["Plugin: vm-migration-scope"])
+router = APIRouter(tags=["Plugin: vm-sku-modernization"])
 
 # VM SKU families v2–v5 are migration candidates.
 # Matches Standard_D4s_v3, Standard_E8ds_v4, Standard_B2ms_v2,
