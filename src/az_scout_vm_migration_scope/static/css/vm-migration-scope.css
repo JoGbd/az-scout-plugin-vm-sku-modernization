@@ -143,6 +143,47 @@
     margin-top: 0.15rem;
 }
 
+.vmm-reco-action {
+    border: 1px solid var(--bs-border-color-translucent);
+    border-radius: var(--bs-border-radius-sm);
+    padding: 0.45rem 0.55rem;
+    margin-bottom: 0.4rem;
+    background: var(--bs-body-bg);
+}
+
+.vmm-reco-action-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.vmm-reco-action-title {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    line-height: 1.3;
+}
+
+.vmm-reco-action-title i {
+    margin-top: 0.1rem;
+}
+
+.vmm-reco-action-evidence {
+    margin-top: 0.2rem;
+    margin-left: 1.35rem;
+    font-size: 0.76rem;
+    color: var(--bs-secondary-color);
+}
+
+.vmm-reco-state-badge {
+    white-space: nowrap;
+}
+
+.vmm-reco-state-pass i { color: var(--bs-success); }
+.vmm-reco-state-fail i { color: var(--bs-warning); }
+.vmm-reco-state-manual i { color: var(--bs-secondary); }
+
 .vmm-tone-blue {
     background: linear-gradient(180deg, rgba(13, 110, 253, 0.08) 0%, var(--bs-body-bg) 58%);
     border-left-color: #0d6efd;
@@ -357,4 +398,302 @@
 
 [data-bs-theme="dark"] .vmm-tone-orange {
     background: linear-gradient(180deg, rgba(253, 126, 20, 0.33) 0%, var(--bs-body-bg) 62%);
+}
+
+
+.vmm-action-bar {
+    display: grid;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.vmm-action-bar .btn {
+    justify-content: center;
+}
+
+.vmm-reco-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+}
+
+.vmm-reco-item {
+    border: 1px solid var(--bs-border-color);
+    border-left: 4px solid var(--bs-primary);
+    border-radius: var(--bs-border-radius);
+    background: var(--bs-body-bg);
+    padding: 0.7rem 0.8rem;
+}
+
+.vmm-reco-item-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin-bottom: 0.35rem;
+}
+
+.vmm-reco-item-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 700;
+}
+
+.vmm-reco-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    justify-content: flex-end;
+}
+
+.vmm-reco-why {
+    font-size: 0.83rem;
+    color: var(--bs-body-color);
+    line-height: 1.35;
+}
+
+.vmm-reco-item-body {
+    margin-top: 0.55rem;
+}
+
+.vmm-reco-action {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+    align-items: flex-start;
+    padding: 0.35rem 0;
+    border-top: 1px solid var(--bs-border-color-translucent);
+}
+
+.vmm-reco-action:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.vmm-reco-action-main {
+    display: flex;
+    gap: 0.45rem;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+.vmm-reco-action-main i {
+    margin-top: 0.1rem;
+}
+
+.vmm-reco-action-text {
+    font-size: 0.85rem;
+    line-height: 1.35;
+}
+
+.vmm-reco-action-evidence {
+    margin-top: 0.15rem;
+    margin-left: 1.25rem;
+    font-size: 0.76rem;
+    color: var(--bs-secondary-color);
+}
+
+.vmm-reco-action-status {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.vmm-reco-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+
+
+.vmm-reco-summary-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.vmm-reco-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+.vmm-reco-item > summary {
+    list-style: none;
+}
+
+.vmm-reco-item[open] {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.vmm-reco-item-body {
+    padding-top: 0.5rem;
+}
+
+.vmm-reco-item-meta .badge {
+    margin-left: 0.25rem;
+}
+
+
+.vmm-reco-toggle {
+    text-decoration: none;
+    color: inherit;
+    border: 0;
+    background: transparent;
+}
+
+.vmm-reco-toggle:hover {
+    color: inherit;
+    text-decoration: none;
+    background: transparent;
+}
+
+.vmm-reco-toggle-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: flex-start;
+    width: 100%;
+    cursor: pointer;
+}
+
+.vmm-reco-toggle .vmm-reco-item-meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+}
+
+.vmm-section-icon {
+    margin-left: 0.35rem;
+    opacity: 0.7;
+}
+
+.vmm-reco-item-body {
+    margin-top: 0.6rem;
+}
+
+.vmm-reco-item[open] .vmm-section-icon,
+.vmm-reco-toggle[aria-expanded="true"] .vmm-section-icon {
+    transform: rotate(180deg);
+}
+
+
+.vmm-reco-action {
+    background: var(--bs-tertiary-bg);
+    border: 1px solid var(--bs-border-color-translucent);
+    border-radius: var(--bs-border-radius-sm);
+    padding: 0.5rem 0.6rem;
+}
+
+.vmm-reco-action-text {
+    font-weight: 600;
+}
+
+.vmm-reco-action-evidence {
+    margin-left: 0;
+    margin-top: 0.3rem;
+}
+
+.vmm-reco-evidence-label {
+    color: var(--bs-secondary-color);
+    font-weight: 600;
+    margin-right: 0.2rem;
+}
+
+.vmm-reco-action-status {
+    border: 1px solid transparent;
+    font-weight: 700;
+    font-size: 0.73rem;
+    letter-spacing: 0.01em;
+}
+
+.vmm-status-auto {
+    background: rgba(25, 135, 84, 0.16);
+    color: #1f9d68;
+    border-color: rgba(25, 135, 84, 0.35);
+}
+
+.vmm-status-script {
+    background: rgba(13, 202, 240, 0.18);
+    color: #0b7f96;
+    border-color: rgba(13, 202, 240, 0.42);
+}
+
+.vmm-status-action {
+    background: rgba(253, 126, 20, 0.18);
+    color: #cb7b10;
+    border-color: rgba(253, 126, 20, 0.42);
+}
+
+.vmm-status-manual {
+    background: rgba(108, 117, 125, 0.2);
+    color: #b7c0c8;
+    border-color: rgba(108, 117, 125, 0.45);
+}
+
+.vmm-reco-item-body.d-none {
+    display: none;
+}
+
+
+.vmm-reco-inline-check {
+    display: flex;
+    justify-content: flex-start;
+}
+
+.vmm-reco-inline-check .btn {
+    border-radius: 999px;
+    font-size: 0.78rem;
+    padding: 0.25rem 0.6rem;
+}
+
+.vmm-reco-action-badges {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+}
+
+.vmm-reco-action-impact {
+    margin-top: 0.25rem;
+    font-size: 0.77rem;
+    color: var(--bs-body-color);
+}
+
+.vmm-reco-guide {
+    line-height: 1.45;
+}
+
+
+.vmm-script-tools {
+    margin-top: 0.45rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed var(--bs-border-color-translucent);
+}
+
+.vmm-script-buttons {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.vmm-script-buttons .btn {
+    border-radius: 999px;
+    font-size: 0.74rem;
+    padding: 0.18rem 0.58rem;
+}
+
+.vmm-script-note {
+    margin-top: 0.3rem;
+    font-size: 0.76rem;
+    color: var(--bs-secondary-color);
+    line-height: 1.3;
+}
+
+.vmm-script-disclaimer {
+    font-style: italic;
 }
