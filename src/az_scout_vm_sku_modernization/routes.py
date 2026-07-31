@@ -16,10 +16,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Plugin: vm-sku-modernization"])
 
-# VM SKU families v2–v5 are migration candidates.
-# Matches Standard_D4s_v3, Standard_E8ds_v4, Standard_B2ms_v2,
-# and Promo variants like Standard_D4_v3_Promo.
-_V2_TO_V5_RE = re.compile(r"_v[2-5][a-z]*(_promo)?$", re.IGNORECASE)
+_DEFAULT_MODERNIZATION_TARGET = "v6v7"
+
+# Scope differs by chosen modernization target:
+# - v5: source families v2-v4
+# - v6/v7: source families v2-v5
+_MODERNIZATION_SCOPE_PATTERNS = {
+    "v5": re.compile(r"_v[2-4][a-z]*(_promo)?$", re.IGNORECASE),
+    "v6v7": re.compile(r"_v[2-5][a-z]*(_promo)?$", re.IGNORECASE),
+}
 
 # Marker strings in image SKU names that indicate Generation 2
 _GEN2_IMAGE_MARKERS = ("gen2", "-g2", "2gen")
@@ -65,9 +70,14 @@ def _detect_generation(vm: dict[str, Any]) -> str:
     return "Unknown"
 
 
-def _is_migration_candidate(vm_size: str) -> bool:
-    """Return True when the SKU belongs to a v2–v5 family."""
-    return bool(_V2_TO_V5_RE.search(vm_size))
+def _is_migration_candidate(
+    vm_size: str, modernization_target: str = _DEFAULT_MODERNIZATION_TARGET
+) -> bool:
+    """Return True when the SKU belongs to the selected modernization scope."""
+    pattern = _MODERNIZATION_SCOPE_PATTERNS.get(
+        modernization_target, _MODERNIZATION_SCOPE_PATTERNS[_DEFAULT_MODERNIZATION_TARGET]
+    )
+    return bool(pattern.search(vm_size))
 
 
 def _build_vm_record(
@@ -116,8 +126,9 @@ def _fetch_vms_for_subscription(
     sub_id: str,
     sub_name: str,
     tenant_id: str | None,
+    modernization_target: str,
 ) -> list[dict[str, Any]]:
-    """List migration-candidate VMs for one subscription (blocking)."""
+    """List in-scope VMs for one subscription and modernization target."""
     url = (
         f"https://management.azure.com/subscriptions/{sub_id}"
         "/providers/Microsoft.Compute/virtualMachines"
@@ -138,21 +149,26 @@ def _fetch_vms_for_subscription(
     records: list[dict[str, Any]] = []
     for vm in vms:
         vm_size = vm.get("properties", {}).get("hardwareProfile", {}).get("vmSize", "")
-        if _is_migration_candidate(vm_size):
+        if _is_migration_candidate(vm_size, modernization_target):
             records.append(_build_vm_record(vm, sub_id, sub_name))
     return records
 
 
 @router.get(
     "/vms",
-    summary="List legacy-SKU VMs in migration scope for v6/v7 planning",
+    summary="List legacy-SKU VMs in modernization scope for the selected target",
     responses={400: {"model": dict}},
 )
 async def get_migration_vms(
     subscriptions: str | None = Query(None, description="Comma-separated subscription IDs."),
+    target: str = Query(
+        _DEFAULT_MODERNIZATION_TARGET,
+        pattern="^(v5|v6v7)$",
+        description="Modernization target: v5 or v6/v7.",
+    ),
     tenantId: str | None = Query(None, description="Optional tenant ID."),  # noqa: N803
 ) -> JSONResponse:
-    """Return legacy-SKU VM inventory (v2-v5) for v6/v7 migration planning scope."""
+    """Return legacy-SKU VM inventory for the selected modernization target."""
     if not subscriptions:
         return JSONResponse(
             {"error": "'subscriptions' query parameter is required"},
@@ -176,7 +192,13 @@ async def get_migration_vms(
     results: list[dict[str, Any]] = []
     for sub_id in sub_ids:
         sub_name = known_subs.get(sub_id, sub_id)
-        items = await asyncio.to_thread(_fetch_vms_for_subscription, sub_id, sub_name, tenantId)
+        items = await asyncio.to_thread(
+            _fetch_vms_for_subscription,
+            sub_id,
+            sub_name,
+            tenantId,
+            target,
+        )
         results.extend(items)
 
     return JSONResponse(results)

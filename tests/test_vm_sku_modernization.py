@@ -19,11 +19,13 @@ def test_plugin_metadata() -> None:
 
 
 def test_migration_candidate_regex() -> None:
-    assert _is_migration_candidate("Standard_D4s_v3")
-    assert _is_migration_candidate("Standard_E8ds_v5")
-    assert _is_migration_candidate("Standard_D4_v3_Promo")
-    assert not _is_migration_candidate("Standard_D4s_v6")
-    assert not _is_migration_candidate("Standard_D2as_v7")
+    assert _is_migration_candidate("Standard_D4s_v3", "v5")
+    assert _is_migration_candidate("Standard_D4s_v4", "v5")
+    assert not _is_migration_candidate("Standard_E8ds_v5", "v5")
+    assert _is_migration_candidate("Standard_E8ds_v5", "v6v7")
+    assert _is_migration_candidate("Standard_D4_v3_Promo", "v6v7")
+    assert not _is_migration_candidate("Standard_D4s_v6", "v6v7")
+    assert not _is_migration_candidate("Standard_D2as_v7", "v6v7")
 
 
 def test_vm_record_enriched_fields() -> None:
@@ -82,6 +84,23 @@ def test_deep_check_route_auth_error() -> None:
         )
     assert resp.status_code == 403
     assert "error" in resp.json()
+
+
+def test_vms_route_passes_selected_modernization_target() -> None:
+    with (
+        patch(
+            "az_scout_vm_sku_modernization.routes.azure_api.list_subscriptions",
+            return_value=[{"id": "sub1", "name": "Subscription One"}],
+        ),
+        patch(
+            "az_scout_vm_sku_modernization.routes._fetch_vms_for_subscription",
+            return_value=[],
+        ) as fetch_vms,
+    ):
+        resp = client.get("/vms", params={"subscriptions": "sub1", "target": "v5"})
+
+    assert resp.status_code == 200
+    fetch_vms.assert_called_once_with("sub1", "Subscription One", None, "v5")
 
 
 def test_deep_check_route_success() -> None:

@@ -16,6 +16,18 @@
                 </button>
             </div>
             <div id="vmm-sub-list" data-testid="vmm-sub-list" class="subscription-checklist"></div>
+            <div class="mt-3">
+                <label class="form-label form-label-sm mb-1" for="vmm-modernization-target">
+                    <i class="bi bi-bullseye"></i> Modernization target
+                </label>
+                <select class="form-select form-select-sm" id="vmm-modernization-target">
+                    <option value="v6v7" selected>v6/v7</option>
+                    <option value="v5">v5</option>
+                </select>
+                <div class="form-text small" id="vmm-modernization-target-hint">
+                    Choose the target family before loading the in-scope VM inventory.
+                </div>
+            </div>
             <div class="d-flex justify-content-between align-items-center mt-2">
                 <small class="text-body-secondary" id="vmm-sub-count">0 selected</small>
                 <button type="button" class="btn btn-primary btn-sm" id="vmm-load-btn"
@@ -67,8 +79,9 @@
     <div class="col-md-9 col-xl-10">
         <!-- Scope definition -->
         <div class="alert alert-info py-2 mb-3 small" role="note">
-            <strong>Scope definition:</strong> This list is a legacy SKU VM inventory for v6/v7 migration
-            planning scope. It is not a direct execution checklist for in-place migration.
+            <strong>Scope definition:</strong>
+            <span id="vmm-scope-definition-copy">This list is a legacy SKU VM inventory for v6/v7 migration
+            planning scope. It is not a direct execution checklist for in-place migration.</span>
         </div>
 
         <!-- Error -->
@@ -77,8 +90,8 @@
         <!-- Empty state -->
         <div id="vmm-empty" data-testid="vmm-empty" class="text-center text-body-secondary py-5">
             <i class="bi bi-arrow-up-circle fs-1 d-block mb-2"></i>
-            <p>Select subscriptions and click <strong>Load</strong> to discover VM candidates for SKU modernization.</p>
-            <p class="small">This inventory targets VMs currently on v2-v5 SKU families.</p>
+            <p id="vmm-empty-copy">Select subscriptions and click <strong>Load</strong> to discover VM candidates for SKU modernization.</p>
+            <p class="small" id="vmm-empty-scope-copy">This inventory targets VMs currently on v2-v5 SKU families.</p>
         </div>
 
         <!-- Loading -->
@@ -90,8 +103,8 @@
         <!-- No results (after load) -->
         <div id="vmm-no-results" data-testid="vmm-no-results" class="text-center text-body-secondary py-5 d-none">
             <i class="bi bi-check-circle fs-1 d-block mb-2 text-success"></i>
-            <p>No legacy SKU (v2-v5) VMs found in the selected subscriptions.</p>
-            <p class="small">No VM is currently in this migration planning scope.</p>
+            <p id="vmm-no-results-copy">No legacy SKU (v2-v5) VMs found in the selected subscriptions.</p>
+            <p class="small" id="vmm-no-results-scope-copy">No VM is currently in this migration planning scope.</p>
         </div>
 
         <!-- Results -->
