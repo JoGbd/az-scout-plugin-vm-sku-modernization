@@ -41,6 +41,9 @@ let vmmDetailModal = null;
 const vmmSkuRecommendationCache = new Map();
 const vmmDeepCheckState = new Map(); // key: `sub|rg|name` → result object | "pending" | "error"
 let vmmCurrentDetailVm = null;
+let vmmCurrentDetailTargetSkus = [];
+let vmmDetailStatusFilter = "all";
+let vmmDetailActiveTab = "overview";
 const vmmComponents = window.azScout?.components || {};
 
 const vmmKnownMarketplacePublishers = new Set([
@@ -1189,8 +1192,9 @@ function vmmEvaluateAction(action, vm) {
     const checkResult = hasCheck ? normalizedAction.check(vm) : null;
     const evidenceValue = typeof normalizedAction?.evidence === "function" ? normalizedAction.evidence(vm) : normalizedAction?.evidence;
     const evidence = evidenceValue ? String(evidenceValue) : "Cannot be verified automatically with the fields currently available.";
+    const hasScriptHelper = vmmHasScriptHelper(text);
     const canUseAdvancedCheck = evidence.includes("Run Advanced check");
-    const canUseScript = vmmHasScriptHelper(text) || canUseAdvancedCheck;
+    const canUseScript = hasScriptHelper || canUseAdvancedCheck;
 
     if (checkResult === true) {
         return {
@@ -1200,6 +1204,8 @@ function vmmEvaluateAction(action, vm) {
             badgeLabel: "Verified",
             icon: "bi-check-circle-fill",
             evidence,
+            hasScriptHelper,
+            canUseAdvancedCheck,
         };
     }
     if (checkResult === false) {
@@ -1210,6 +1216,8 @@ function vmmEvaluateAction(action, vm) {
             badgeLabel: "Needs remediation",
             icon: "bi-x-circle",
             evidence,
+            hasScriptHelper,
+            canUseAdvancedCheck,
         };
     }
     if (canUseScript) {
@@ -1220,6 +1228,8 @@ function vmmEvaluateAction(action, vm) {
             badgeLabel: "Script / check",
             icon: "bi-search",
             evidence,
+            hasScriptHelper,
+            canUseAdvancedCheck,
         };
     }
     return {
@@ -1229,6 +1239,8 @@ function vmmEvaluateAction(action, vm) {
         badgeLabel: "Human review",
         icon: "bi-dash-circle",
         evidence,
+        hasScriptHelper,
+        canUseAdvancedCheck,
     };
 }
 
@@ -1297,6 +1309,23 @@ function vmmUpdateActionButtons() {
     if (fullCheckBtn) fullCheckBtn.disabled = !vmmCurrentDetailVm;
     const exportBtn = document.getElementById("vmm-detail-export-btn");
     if (exportBtn) exportBtn.disabled = !vmmCurrentDetailVm;
+}
+
+function vmmSetDetailStatusFilter(status) {
+    vmmDetailActiveTab = "details";
+    vmmDetailStatusFilter = vmmDetailStatusFilter === status ? "all" : status;
+    vmmRenderCurrentDetailContent();
+}
+
+function vmmSetDetailTab(tab) {
+    vmmDetailActiveTab = tab;
+}
+
+function vmmRenderCurrentDetailContent() {
+    const contentEl = document.getElementById("vmm-detail-content");
+    if (!contentEl || !vmmCurrentDetailVm) return;
+    contentEl.innerHTML = vmmBuildDetailContentHtml(vmmCurrentDetailVm, vmmCurrentDetailTargetSkus);
+    contentEl.classList.remove("d-none");
 }
 
 // ---------------------------------------------------------------------------
@@ -1807,73 +1836,137 @@ function vmmRecommendationIcon(title) {
     return "bi-lightbulb";
 }
 
-function vmmBuildRecommendationSectionHtml(vm) {
-    const vmName = escapeHtml(vm.name || "VM");
-    const sku = escapeHtml(vm.sku || "Unknown");
-    const region = escapeHtml(vm.region || "Unknown");
-    const generation = escapeHtml(vm.generation || "Unknown");
-    const diskController = escapeHtml(vm.disk_controller_type || "SCSI");
-    const publisher = escapeHtml(vm.image_publisher || "Unknown");
+function vmmBuildRecommendationModel(vm) {
     const recs = vmmBuildRecommendations(vm);
-
-    const statusCount = recs.reduce((acc, rec) => {
-        for (const action of rec.actions) {
-            const evaluated = vmmEvaluateAction(action, vm);
-            acc[evaluated.status] = (acc[evaluated.status] || 0) + 1;
-        }
-        return acc;
-    }, {});
-
+    const statusCount = { pass: 0, fail: 0, script: 0, manual: 0 };
     const toneClasses = ["vmm-tone-blue", "vmm-tone-green", "vmm-tone-purple", "vmm-tone-orange"];
-    const sections = recs.map((r, idx) => {
-        const icon = vmmRecommendationIcon(r.title);
-        const toneClass = toneClasses[idx % toneClasses.length];
-        const auto = r.actions.reduce((n, a) => n + (vmmEvaluateAction(a, vm).status === "pass" ? 1 : 0), 0);
-        const script = r.actions.reduce((n, a) => n + (vmmEvaluateAction(a, vm).status === "script" ? 1 : 0), 0);
-        const manual = r.actions.reduce((n, a) => n + (vmmEvaluateAction(a, vm).status === "manual" ? 1 : 0), 0);
-        const needs = r.actions.reduce((n, a) => n + (vmmEvaluateAction(a, vm).status === "fail" ? 1 : 0), 0);
+
+    const sections = recs.map((recommendation, idx) => {
+        const actions = recommendation.actions.map((action) => {
+            const evaluated = vmmEvaluateAction(action, vm);
+            const priority = vmmGetActionPriority(action, recommendation.title);
+            statusCount[evaluated.status] += 1;
+            return {
+                action,
+                evaluated,
+                priorityBadge: vmmGetActionPriorityBadge(priority),
+                impact: vmmGetActionImpact(action, recommendation.title),
+            };
+        });
+        const counts = actions.reduce((acc, { evaluated }) => {
+            acc[evaluated.status] += 1;
+            return acc;
+        }, { pass: 0, fail: 0, script: 0, manual: 0 });
         const badges = [];
-        if (auto) badges.push(`<span class="badge text-bg-success">${auto} verified</span>`);
-        if (needs) badges.push(`<span class="badge text-bg-warning text-dark">${needs} needs remediation</span>`);
-        if (script) badges.push(`<span class="badge text-bg-info">${script} script/check</span>`);
-        if (manual) badges.push(`<span class="badge text-bg-secondary">${manual} review</span>`);
+        if (counts.pass) badges.push(`<span class="badge text-bg-success">${counts.pass} verified</span>`);
+        if (counts.fail) badges.push(`<span class="badge text-bg-warning text-dark">${counts.fail} needs remediation</span>`);
+        if (counts.script) badges.push(`<span class="badge text-bg-info">${counts.script} script/check</span>`);
+        if (counts.manual) badges.push(`<span class="badge text-bg-secondary">${counts.manual} review</span>`);
+
+        return {
+            title: recommendation.title,
+            why: recommendation.why,
+            icon: vmmRecommendationIcon(recommendation.title),
+            toneClass: toneClasses[idx % toneClasses.length],
+            actions,
+            counts,
+            badges,
+        };
+    });
+
+    const outstanding = statusCount.fail + statusCount.script + statusCount.manual;
+
+    return {
+        sections,
+        statusCount,
+        blockers: sections.flatMap((section) => section.actions
+            .filter(({ evaluated }) => evaluated.status === "fail")
+            .map(({ evaluated }) => ({ sectionTitle: section.title, text: evaluated.text }))),
+        scriptableChecks: sections.flatMap((section) => section.actions
+            .filter(({ evaluated }) => evaluated.status === "script")
+            .map(({ evaluated }) => ({ sectionTitle: section.title, text: evaluated.text }))),
+        humanValidations: sections.flatMap((section) => section.actions
+            .filter(({ evaluated }) => evaluated.status === "manual")
+            .map(({ evaluated }) => ({ sectionTitle: section.title, text: evaluated.text }))),
+        readyForPilot: outstanding === 0,
+    };
+}
+
+function vmmBuildSummaryList(items, emptyLabel) {
+    if (!items.length) {
+        return `<p class="small text-body-secondary mb-0">${escapeHtml(emptyLabel)}</p>`;
+    }
+    return `
+        <ul class="vmm-wave-list mb-0">
+            ${items.map((item) => `
+                <li>
+                    <span class="vmm-wave-list-title">${escapeHtml(item.sectionTitle)}</span>
+                    <span>${escapeHtml(item.text)}</span>
+                </li>
+            `).join("")}
+        </ul>
+    `;
+}
+
+function vmmBuildStatusFilterButtons(statusCount) {
+    const filters = [
+        { key: "pass", className: "text-bg-success", label: `${statusCount.pass || 0} verified` },
+        { key: "fail", className: "text-bg-warning text-dark", label: `${statusCount.fail || 0} needs remediation` },
+        { key: "script", className: "text-bg-info", label: `${statusCount.script || 0} script / check` },
+        { key: "manual", className: "text-bg-secondary", label: `${statusCount.manual || 0} human review` },
+    ];
+    return filters.map((filter) => {
+        const isActive = vmmDetailStatusFilter === filter.key;
+        return `
+            <button
+                type="button"
+                class="badge border-0 ${filter.className} vmm-status-filter${isActive ? " is-active" : ""}"
+                aria-pressed="${String(isActive)}"
+                onclick="vmmSetDetailStatusFilter('${filter.key}')"
+            >${escapeHtml(filter.label)}</button>
+        `;
+    }).join("");
+}
+
+function vmmBuildActionStatusMarkup(evaluated) {
+    if (evaluated.canUseAdvancedCheck && evaluated.status !== "pass") {
+        return `
+            <button type="button" class="btn btn-sm btn-outline-info vmm-advanced-check-btn" onclick="vmmRunFullCheck()">
+                <i class="bi bi-search me-1"></i>Advanced check
+            </button>
+        `;
+    }
+    return `<span class="badge rounded-pill vmm-reco-action-status ${evaluated.badgeClass}">${escapeHtml(evaluated.badgeLabel)}</span>`;
+}
+
+function vmmBuildRecommendationSectionHtml(vm) {
+    const model = vmmBuildRecommendationModel(vm);
+    const filteredSections = model.sections.map((section, idx) => {
+        const filteredActions = vmmDetailStatusFilter === "all"
+            ? section.actions
+            : section.actions.filter(({ evaluated }) => evaluated.status === vmmDetailStatusFilter);
+        if (!filteredActions.length) return "";
 
         const sectionBodyId = `vmm-reco-body-${idx}`;
         const sectionButtonId = `vmm-reco-btn-${idx}`;
-        const requiresAdvancedCheck = r.actions.some((action) => {
-            const evaluated = vmmEvaluateAction(action, vm);
-            return evaluated.status !== "pass" && evaluated.evidence.includes("Run Advanced check");
-        });
-        const inlineAdvancedCheck = requiresAdvancedCheck
-            ? `<div class="vmm-reco-inline-check mb-2">
-                <button type="button" class="btn btn-sm btn-outline-info" onclick="vmmRunFullCheck()">
-                    <i class="bi bi-search me-1"></i>Advanced check for this recommendation
-                </button>
-              </div>`
-            : "";
-        const actions = r.actions.map((action) => {
-            const evaluated = vmmEvaluateAction(action, vm);
-            const priority = vmmGetActionPriority(action, r.title);
-            const priorityBadge = vmmGetActionPriorityBadge(priority);
-            const impact = vmmGetActionImpact(action, r.title);
-            return `
-                <div class="vmm-reco-action">
-                    <div>
-                        <div class="vmm-reco-action-main">
-                            <div class="vmm-reco-action-text">${escapeHtml(evaluated.text)}</div>
-                        </div>
-                        <div class="vmm-reco-action-impact"><span class="vmm-reco-evidence-label">Why it matters:</span> ${escapeHtml(impact)}</div>
-                        <div class="vmm-reco-action-evidence"><span class="vmm-reco-evidence-label">Evidence:</span> ${escapeHtml(evaluated.evidence)}</div>${vmmBuildDriverValidationTools(evaluated.text)}${vmmBuildScsiPathValidationTools(evaluated.text)}${vmmBuildPilotValidationTools(evaluated.text)}${vmmBuildNetworkValidationTools(evaluated.text)}${vmmBuildAppStateTools(evaluated.text)}${vmmBuildQuotaCapacityTools(evaluated.text)}${vmmBuildTempDiskCheckTools(evaluated.text)}${vmmBuildOsDiskBackupTools(evaluated.text)}
+        const actions = filteredActions.map(({ evaluated, priorityBadge, impact }) => `
+            <div class="vmm-reco-action">
+                <div>
+                    <div class="vmm-reco-action-main">
+                        <div class="vmm-reco-action-text">${escapeHtml(evaluated.text)}</div>
                     </div>
-                    <div class="vmm-reco-action-badges">
-                        <span class="badge rounded-pill ${priorityBadge.className}">${escapeHtml(priorityBadge.label)}</span>
-                        <span class="badge rounded-pill vmm-reco-action-status ${evaluated.badgeClass}">${escapeHtml(evaluated.badgeLabel)}</span>
-                    </div>
-                </div>`;
-        }).join("");
+                    <div class="vmm-reco-action-impact"><span class="vmm-reco-evidence-label">Why it matters:</span> ${escapeHtml(impact)}</div>
+                    <div class="vmm-reco-action-evidence"><span class="vmm-reco-evidence-label">Evidence:</span> ${escapeHtml(evaluated.evidence)}</div>${vmmBuildDriverValidationTools(evaluated.text)}${vmmBuildScsiPathValidationTools(evaluated.text)}${vmmBuildPilotValidationTools(evaluated.text)}${vmmBuildNetworkValidationTools(evaluated.text)}${vmmBuildAppStateTools(evaluated.text)}${vmmBuildQuotaCapacityTools(evaluated.text)}${vmmBuildTempDiskCheckTools(evaluated.text)}${vmmBuildOsDiskBackupTools(evaluated.text)}
+                </div>
+                <div class="vmm-reco-action-badges">
+                    ${evaluated.status === "pass" ? "" : `<span class="badge rounded-pill ${priorityBadge.className}">${escapeHtml(priorityBadge.label)}</span>`}
+                    ${vmmBuildActionStatusMarkup(evaluated)}
+                </div>
+            </div>
+        `).join("");
 
         return `
-            <section class="vmm-reco-item ${toneClass}">
+            <section class="vmm-reco-item ${section.toneClass}">
                 <button
                     type="button"
                     id="${sectionButtonId}"
@@ -1884,62 +1977,146 @@ function vmmBuildRecommendationSectionHtml(vm) {
                     <div class="vmm-reco-toggle-head">
                         <div>
                             <div class="vmm-reco-item-title">
-                                <i class="bi ${icon}"></i>
-                                <span>${escapeHtml(r.title)}</span>
+                                <i class="bi ${section.icon}"></i>
+                                <span>${escapeHtml(section.title)}</span>
                                 <i class="bi bi-chevron-down vmm-section-icon"></i>
                             </div>
-                            <div class="vmm-reco-why mt-1">${escapeHtml(r.why)}</div>
+                            <div class="vmm-reco-why mt-1">${escapeHtml(section.why)}</div>
                         </div>
-                        <div class="vmm-reco-item-meta">${badges.join("")}</div>
+                        <div class="vmm-reco-item-meta">${section.badges.join("")}</div>
                     </div>
                 </button>
-                <div id="${sectionBodyId}" class="vmm-reco-item-body d-none">${inlineAdvancedCheck}${actions}</div>
-            </section>`;
+                <div id="${sectionBodyId}" class="vmm-reco-item-body d-none">${actions}</div>
+            </section>
+        `;
     }).join("");
 
+    const filterDescription = vmmDetailStatusFilter === "all"
+        ? ""
+        : `<div class="small text-body-secondary mt-2">Showing only <strong>${escapeHtml({
+            pass: "Verified",
+            fail: "Needs remediation",
+            script: "Script / check",
+            manual: "Human review",
+        }[vmmDetailStatusFilter] || "selected")}</strong> actions. Click the active label again to clear the filter.</div>`;
+
     return `
-        <div class="accordion mt-3" id="vmmRecoAccordion">
-            <div class="accordion-item">
-                <h2 class="accordion-header">
-                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#vmmRecoPanel" aria-expanded="false">
-                        <i class="bi bi-lightbulb me-2"></i>VM SKU Modernization Recommendations
-                    </button>
-                </h2>
-                <div id="vmmRecoPanel" class="accordion-collapse collapse show">
-                    <div class="accordion-body p-3">
-                        <div class="vmm-vm-context mb-3">
-                            <div class="small text-body-secondary mb-1">
-                                <strong>${vmName}</strong> · SKU <code>${sku}</code>
-                            </div>
-                            <div class="d-flex flex-wrap gap-2">
-                                <span class="badge rounded-pill text-bg-primary">Region: ${region}</span>
-                                <span class="badge rounded-pill text-bg-info">Hyper-V Gen: ${generation}</span>
-                                <span class="badge rounded-pill text-bg-success">Disk: ${diskController}</span>
-                                <span class="badge rounded-pill text-bg-secondary">Publisher: ${publisher}</span>
-                            </div>
-                        </div>
-                        <div class="vmm-reco-summary mb-3">
-                            <span class="badge text-bg-success">${statusCount.pass || 0} verified</span>
-                            <span class="badge text-bg-warning text-dark">${statusCount.fail || 0} needs remediation</span>
-                            <span class="badge text-bg-info">${statusCount.script || 0} script / check</span>
-                            <span class="badge text-bg-secondary">${statusCount.manual || 0} human review</span>
-                        </div>
-                        <div class="alert alert-info small mb-3 vmm-reco-guide">
-                            <strong>How to use these recommendations:</strong> <span class="badge text-bg-success">Verified</span> means the current inventory or advanced results already confirm the item.
-                            <span class="badge text-bg-warning text-dark">Needs remediation</span> means a blocker or gap is already visible.
-                            <span class="badge text-bg-info">Script / check</span> means you can use the provided script or the Advanced check button to gather stronger evidence.
-                            <span class="badge text-bg-secondary">Human review</span> means the plugin cannot validate the item reliably with the currently available signals.
-                            Run local scripts on the VM itself when stated, and Azure CLI scripts from a workstation with subscription access.
-                        </div>
-                        <div class="alert alert-light border small mb-3">
-                            For more details about these recommendations, refer to
-                            <a href="https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan" target="_blank" rel="noopener noreferrer">the Microsoft v6/v7 migration planning documentation</a>.
-                        </div>
-                        <div class="vmm-reco-list">${sections}</div>
-                    </div>
-                </div>
+        <div class="vmm-reco-summary mb-3">
+            ${vmmBuildStatusFilterButtons(model.statusCount)}
+        </div>
+        ${filterDescription}
+        <div class="alert alert-info small mb-3 vmm-reco-guide">
+            <strong>How to use these recommendations:</strong> <span class="badge text-bg-success">Verified</span> means the current inventory or advanced results already confirm the item.
+            <span class="badge text-bg-warning text-dark">Needs remediation</span> means a blocker or gap is already visible.
+            <span class="badge text-bg-info">Script / check</span> means you can use the provided helper script or the in-row Advanced check to gather stronger evidence.
+            <span class="badge text-bg-secondary">Human review</span> means the plugin cannot validate the item reliably with the currently available signals.
+            Run local scripts on the VM itself when stated, and Azure CLI scripts from a workstation with subscription access.
+        </div>
+        <div class="alert alert-light border small mb-3">
+            For more details about these recommendations, refer to
+            <a href="https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan" target="_blank" rel="noopener noreferrer">the Microsoft v6/v7 migration planning documentation</a>.
+        </div>
+        ${filteredSections
+            ? `<div class="vmm-reco-list">${filteredSections}</div>`
+            : `<div class="alert alert-secondary mb-0">No recommendation actions match the current status filter.</div>`}
+    `;
+}
+
+function vmmBuildOverviewSectionHtml(vm) {
+    const model = vmmBuildRecommendationModel(vm);
+    const pilotStatusClass = model.readyForPilot ? "text-bg-success" : "text-bg-warning text-dark";
+    const pilotStatusLabel = model.readyForPilot ? "Ready for pilot" : "Not ready for pilot";
+
+    return `
+        <div class="vmm-wave-summary-grid">
+            <article class="vmm-wave-card">
+                <div class="vmm-wave-card-label">Blockers</div>
+                <div class="vmm-wave-card-value text-warning-emphasis">${model.statusCount.fail}</div>
+                <div class="small text-body-secondary">Actions already showing a remediation gap.</div>
+            </article>
+            <article class="vmm-wave-card">
+                <div class="vmm-wave-card-label">Remaining scriptable checks</div>
+                <div class="vmm-wave-card-value text-info-emphasis">${model.statusCount.script}</div>
+                <div class="small text-body-secondary">Can be advanced with a helper script or Advanced check.</div>
+            </article>
+            <article class="vmm-wave-card">
+                <div class="vmm-wave-card-label">Remaining human validations</div>
+                <div class="vmm-wave-card-value text-body-emphasis">${model.statusCount.manual}</div>
+                <div class="small text-body-secondary">Need operator or workload-owner review.</div>
+            </article>
+            <article class="vmm-wave-card">
+                <div class="vmm-wave-card-label">Pilot status</div>
+                <div class="mt-1"><span class="badge ${pilotStatusClass}">${pilotStatusLabel}</span></div>
+                <div class="small text-body-secondary mt-2">Pilot-ready means no blockers and no remaining validation items.</div>
+            </article>
+        </div>
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
+                <section class="vmm-wave-detail-card">
+                    <h6><i class="bi bi-exclamation-triangle me-1"></i>Blockers</h6>
+                    ${vmmBuildSummaryList(model.blockers, "No blockers currently detected.")}
+                </section>
+            </div>
+            <div class="col-lg-4">
+                <section class="vmm-wave-detail-card">
+                    <h6><i class="bi bi-terminal me-1"></i>Remaining scriptable checks</h6>
+                    ${vmmBuildSummaryList(model.scriptableChecks, "No remaining scriptable checks.")}
+                </section>
+            </div>
+            <div class="col-lg-4">
+                <section class="vmm-wave-detail-card">
+                    <h6><i class="bi bi-person-check me-1"></i>Remaining human validations</h6>
+                    ${vmmBuildSummaryList(model.humanValidations, "No remaining human validations.")}
+                </section>
             </div>
         </div>
+    `;
+}
+
+function vmmBuildDetailContentHtml(vm, targetSkus) {
+    const vmName = escapeHtml(vm.name || "VM");
+    const sku = escapeHtml(vm.sku || "Unknown");
+    const region = escapeHtml(vm.region || "Unknown");
+    const generation = escapeHtml(vm.generation || "Unknown");
+    const diskController = escapeHtml(vm.disk_controller_type || "SCSI");
+    const publisher = escapeHtml(vm.image_publisher || "Unknown");
+
+    const overviewActive = vmmDetailActiveTab === "overview";
+    const detailsActive = vmmDetailActiveTab === "details";
+
+    return `
+        <div class="vmm-vm-context mb-3">
+            <div class="small text-body-secondary mb-1">
+                <strong>${vmName}</strong> · SKU <code>${sku}</code>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <span class="badge rounded-pill text-bg-primary">Region: ${region}</span>
+                <span class="badge rounded-pill text-bg-info">Hyper-V Gen: ${generation}</span>
+                <span class="badge rounded-pill text-bg-success">Disk: ${diskController}</span>
+                <span class="badge rounded-pill text-bg-secondary">Publisher: ${publisher}</span>
+            </div>
+        </div>
+        <ul class="nav nav-tabs vmm-detail-tabs" id="vmmDetailTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link${overviewActive ? " active" : ""}" id="vmm-overview-tab" data-bs-toggle="tab" data-bs-target="#vmm-overview-pane" type="button" role="tab" aria-controls="vmm-overview-pane" aria-selected="${String(overviewActive)}" onclick="vmmSetDetailTab('overview')">
+                    Overview
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link${detailsActive ? " active" : ""}" id="vmm-details-tab" data-bs-toggle="tab" data-bs-target="#vmm-details-pane" type="button" role="tab" aria-controls="vmm-details-pane" aria-selected="${String(detailsActive)}" onclick="vmmSetDetailTab('details')">
+                    Details
+                </button>
+            </li>
+        </ul>
+        <div class="tab-content vmm-detail-tab-content">
+            <div class="tab-pane fade${overviewActive ? " show active" : ""}" id="vmm-overview-pane" role="tabpanel" aria-labelledby="vmm-overview-tab" tabindex="0">
+                ${vmmBuildOverviewSectionHtml(vm)}
+            </div>
+            <div class="tab-pane fade${detailsActive ? " show active" : ""}" id="vmm-details-pane" role="tabpanel" aria-labelledby="vmm-details-tab" tabindex="0">
+                ${vmmBuildRecommendationSectionHtml(vm)}
+            </div>
+        </div>
+        ${vmmBuildTargetRecommendationSection(vm, targetSkus)}
     `;
 }
 
@@ -2163,6 +2340,9 @@ async function vmmOpenVmDetail(vm) {
     if (!modal) return;
 
     vmmCurrentDetailVm = vm;
+    vmmCurrentDetailTargetSkus = [];
+    vmmDetailStatusFilter = "all";
+    vmmDetailActiveTab = "overview";
 
     const nameEl = document.getElementById("vmm-detail-name");
     const loadingEl = document.getElementById("vmm-detail-loading");
@@ -2177,11 +2357,8 @@ async function vmmOpenVmDetail(vm) {
 
     try {
         const targetSkus = await vmmFetchTargetSkuRecommendations(vm);
-        let html = "";
-        html += vmmBuildRecommendationSectionHtml(vm);
-        html += vmmBuildTargetRecommendationSection(vm, targetSkus);
-        contentEl.innerHTML = html;
-        contentEl.classList.remove("d-none");
+        vmmCurrentDetailTargetSkus = targetSkus;
+        vmmRenderCurrentDetailContent();
     } catch (err) {
         contentEl.innerHTML = `<div class="text-danger small">Failed to build recommendations: ${escapeHtml(String(err))}</div>`;
         contentEl.classList.remove("d-none");

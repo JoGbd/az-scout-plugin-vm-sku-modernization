@@ -507,6 +507,83 @@
     margin-bottom: 0.75rem;
 }
 
+.vmm-status-filter {
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.vmm-status-filter:hover,
+.vmm-status-filter:focus {
+    transform: translateY(-1px);
+    box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.15);
+}
+
+.vmm-status-filter.is-active {
+    box-shadow: 0 0 0 0.16rem rgba(13, 110, 253, 0.28);
+}
+
+.vmm-detail-tabs {
+    margin-top: 1rem;
+}
+
+.vmm-detail-tab-content {
+    border: 1px solid var(--bs-border-color);
+    border-top: 0;
+    border-radius: 0 0 var(--bs-border-radius) var(--bs-border-radius);
+    background: var(--bs-body-bg);
+    padding: 1rem;
+}
+
+.vmm-wave-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+
+.vmm-wave-card,
+.vmm-wave-detail-card {
+    border: 1px solid var(--bs-border-color);
+    border-radius: var(--bs-border-radius);
+    background: var(--bs-tertiary-bg);
+    padding: 0.85rem;
+}
+
+.vmm-wave-card-label {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--bs-secondary-color);
+}
+
+.vmm-wave-card-value {
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.1;
+    margin: 0.3rem 0 0.35rem;
+}
+
+.vmm-wave-detail-card h6 {
+    margin-bottom: 0.65rem;
+}
+
+.vmm-wave-list {
+    padding-left: 1rem;
+}
+
+.vmm-wave-list li + li {
+    margin-top: 0.45rem;
+}
+
+.vmm-wave-list-title {
+    display: block;
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--bs-secondary-color);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.1rem;
+}
+
 
 .vmm-reco-summary-row {
     display: flex;
@@ -656,6 +733,10 @@
     flex-direction: column;
     align-items: flex-end;
     gap: 0.35rem;
+}
+
+.vmm-advanced-check-btn {
+    white-space: nowrap;
 }
 
 .vmm-reco-action-impact {
