@@ -21,9 +21,14 @@
     if (filterInput) {
         filterInput.addEventListener("input", () => renderVmmSubList(filterInput.value));
     }
+    const targetSelect = document.getElementById("vmm-modernization-target");
+    if (targetSelect) {
+        targetSelect.addEventListener("change", () => vmmSetModernizationTarget(targetSelect.value));
+    }
     if (typeof subscriptions !== "undefined" && subscriptions.length) {
         renderVmmSubList();
     }
+    vmmRefreshTargetAwareCopy();
     vmmUpdateLoadButton();
     vmmUpdateActionButtons();
 })();
@@ -32,6 +37,30 @@
 // State
 // ---------------------------------------------------------------------------
 const vmmSelectedSubs = new Set();
+const vmmModernizationTargets = {
+    v5: {
+        value: "v5",
+        label: "v5",
+        scopeLabel: "v2-v4",
+        docs: [
+            {
+                href: "https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/overview",
+                label: "the Microsoft Azure VM sizes overview",
+            },
+        ],
+    },
+    v6v7: {
+        value: "v6v7",
+        label: "v6/v7",
+        scopeLabel: "v2-v5",
+        docs: [
+            {
+                href: "https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan",
+                label: "the Microsoft v6/v7 migration planning documentation",
+            },
+        ],
+    },
+};
 let vmmAllVms = [];          // raw API results
 let vmmFilteredVms = [];     // after filter application
 let vmmDisplayedVms = [];    // current table ordering
@@ -44,6 +73,7 @@ let vmmCurrentDetailVm = null;
 let vmmCurrentDetailTargetSkus = [];
 let vmmDetailStatusFilter = "all";
 let vmmDetailActiveTab = "overview";
+let vmmModernizationTarget = "v6v7";
 const vmmComponents = window.azScout?.components || {};
 
 const vmmKnownMarketplacePublishers = new Set([
@@ -81,9 +111,110 @@ function vmmGetPrimaryZone(vm) {
     return zones.length ? String(zones[0]) : "";
 }
 
+function vmmGetModernizationTargetConfig() {
+    return vmmModernizationTargets[vmmModernizationTarget] || vmmModernizationTargets.v6v7;
+}
+
+function vmmGetModernizationTargetLabel() {
+    return vmmGetModernizationTargetConfig().label;
+}
+
+function vmmGetModernizationScopeLabel() {
+    return vmmGetModernizationTargetConfig().scopeLabel;
+}
+
+function vmmIsV6V7Target() {
+    return vmmModernizationTarget === "v6v7";
+}
+
+function vmmGetRecommendedTargetLabel() {
+    return `Recommended ${vmmGetModernizationTargetLabel()} target SKU`;
+}
+
+function vmmBuildReferenceDocumentationHtml() {
+    const docs = vmmGetModernizationTargetConfig().docs || [];
+    if (!docs.length) return "";
+    const links = docs
+        .map((doc) => `<a href="${doc.href}" target="_blank" rel="noopener noreferrer">${doc.label}</a>`)
+        .join(" and ");
+    return `
+        <div class="alert alert-light border small mb-3">
+            For more details about this ${escapeHtml(vmmGetModernizationTargetLabel())} modernization path, refer to ${links}.
+        </div>
+    `;
+}
+
+function vmmRefreshTargetAwareCopy() {
+    const targetLabel = vmmGetModernizationTargetLabel();
+    const scopeLabel = vmmGetModernizationScopeLabel();
+    const targetSelect = document.getElementById("vmm-modernization-target");
+    if (targetSelect) targetSelect.value = vmmModernizationTarget;
+
+    const hint = document.getElementById("vmm-modernization-target-hint");
+    if (hint) {
+        hint.textContent = vmmIsV6V7Target()
+            ? "Shows source VMs currently on v2-v5 families and suggests v6/v7 targets."
+            : "Shows source VMs currently on v2-v4 families and suggests v5 targets.";
+    }
+
+    const scopeDefinition = document.getElementById("vmm-scope-definition-copy");
+    if (scopeDefinition) {
+        scopeDefinition.textContent = `This list is a legacy SKU VM inventory for ${targetLabel} modernization planning scope. It is not a direct execution checklist for in-place migration.`;
+    }
+
+    const emptyCopy = document.getElementById("vmm-empty-copy");
+    if (emptyCopy) {
+        emptyCopy.innerHTML = "Select subscriptions and click <strong>Load</strong> to discover VMs in the chosen modernization scope.";
+    }
+
+    const emptyScopeCopy = document.getElementById("vmm-empty-scope-copy");
+    if (emptyScopeCopy) {
+        emptyScopeCopy.textContent = `This inventory targets VMs currently on ${scopeLabel} SKU families.`;
+    }
+
+    const noResultsCopy = document.getElementById("vmm-no-results-copy");
+    if (noResultsCopy) {
+        noResultsCopy.textContent = `No legacy SKU (${scopeLabel}) VMs found in the selected subscriptions.`;
+    }
+
+    const noResultsScopeCopy = document.getElementById("vmm-no-results-scope-copy");
+    if (noResultsScopeCopy) {
+        noResultsScopeCopy.textContent = `No VM is currently in the selected ${targetLabel} modernization scope.`;
+    }
+}
+
+function vmmResetLoadedInventory() {
+    vmmAllVms = [];
+    vmmFilteredVms = [];
+    vmmDisplayedVms = [];
+    vmmCurrentDetailVm = null;
+    vmmCurrentDetailTargetSkus = [];
+    vmmSkuRecommendationCache.clear();
+    vmmDeepCheckState.clear();
+    vmmUpdateActionButtons();
+    vmmDetailStatusFilter = "all";
+    vmmDetailActiveTab = "overview";
+    const tbody = document.getElementById("vmm-tbody");
+    if (tbody) tbody.innerHTML = "";
+    const countEl = document.getElementById("vmm-table-count");
+    if (countEl) countEl.textContent = "0";
+    const statsEl = document.getElementById("vmm-stats");
+    if (statsEl) statsEl.innerHTML = "";
+    if (vmmDetailModal) vmmDetailModal.hide();
+    vmmSetView("empty");
+}
+
+function vmmSetModernizationTarget(target) {
+    const nextTarget = target === "v5" ? "v5" : "v6v7";
+    if (nextTarget === vmmModernizationTarget) return;
+    vmmModernizationTarget = nextTarget;
+    vmmRefreshTargetAwareCopy();
+    vmmResetLoadedInventory();
+}
+
 function vmmGetSuggestedTargetSku(vm) {
     if (vm?.subscription_id && vm?.region && vm?.sku) {
-        const cacheKey = `${vm.subscription_id}|${vm.region}|${vm.sku}`;
+        const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.region}|${vm.sku}`;
         const cached = vmmSkuRecommendationCache.get(cacheKey);
         if (Array.isArray(cached) && cached[0]?.name) return String(cached[0].name);
     }
@@ -111,7 +242,7 @@ function vmmHasScriptHelper(actionText) {
         "inventory app state persisted on os disk before cutover",
         "add explicit backup and restore steps for os-disk data",
         "keep persistent data on managed disks, not temporary local disks",
-        "confirm v6/v7 size availability, zone support, and quota in target region/zone",
+        "size availability, zone support, and quota in target region/zone",
         "request quota early and reserve capacity for wave windows",
     ].some((phrase) => normalized.includes(phrase));
 }
@@ -1041,7 +1172,7 @@ function vmmGetQuotaCapacityScript(kind, vm = null) {
 function vmmBuildQuotaCapacityTools(actionText) {
     const normalized = String(actionText || "").toLowerCase();
     if (
-        !normalized.includes("confirm v6/v7 size availability, zone support, and quota in target region/zone")
+        !normalized.includes("size availability, zone support, and quota in target region/zone")
         && !normalized.includes("request quota early and reserve capacity for wave windows")
     ) return "";
 
@@ -1384,9 +1515,11 @@ async function vmmLoad() {
 
     // Reset deep-check state when a new load is triggered
     vmmDeepCheckState.clear();
+    vmmSkuRecommendationCache.clear();
 
     const subIds = [...vmmSelectedSubs].join(",");
-    const url = `/plugins/vm-sku-modernization/vms?subscriptions=${encodeURIComponent(subIds)}${tenantQS()}`;
+    const url = `/plugins/vm-sku-modernization/vms?subscriptions=${encodeURIComponent(subIds)}`
+        + `&target=${encodeURIComponent(vmmModernizationTarget)}${tenantQS()}`;
 
     try {
         const data = await apiFetch(url);
@@ -1553,6 +1686,7 @@ function vmmGetReadinessAssessment(vm) {
 
 function vmmBuildRecommendations(vm) {
     const recs = [];
+    const targetLabel = vmmGetModernizationTargetLabel();
     const generation = String(vm.generation || "");
     const diskController = String(vm.disk_controller_type || "SCSI");
     const osType = String(vm.os_type || "Unknown");
@@ -1563,13 +1697,20 @@ function vmmBuildRecommendations(vm) {
     // ---- Generation 2 & Trusted Launch ----
     if (generation.startsWith("V1")) {
         recs.push({
-            title: "Generation 2 and Trusted Launch",
-            why: "This VM appears to be Generation 1 or not yet confirmed as Generation 2.",
+            title: vmmIsV6V7Target() ? "Generation 2 and Trusted Launch" : "Generation and security profile",
+            why: vmmIsV6V7Target()
+                ? "This VM appears to be Generation 1 or not yet confirmed as Generation 2."
+                : `This VM appears to be Generation 1 or not yet confirmed as Generation 2. Validate the exact ${targetLabel} landing zone before retaining the current boot profile.`,
             actions: [
-                vmmCreateAction("Plan a Generation 2 path before sizing into v6/v7.", {
-                    check: (item) => String(item.generation || "").startsWith("V2"),
-                    evidence: (item) => `Detected generation: ${String(item.generation || "Unknown")}`,
-                }),
+                vmmCreateAction(
+                    vmmIsV6V7Target()
+                        ? `Plan a Generation 2 path before sizing into ${targetLabel}.`
+                        : `Confirm whether the chosen ${targetLabel} size can retain the current generation, or plan a Generation 2 conversion first.`,
+                    {
+                        check: (item) => String(item.generation || "").startsWith("V2"),
+                        evidence: (item) => `Detected generation: ${String(item.generation || "Unknown")}`,
+                    },
+                ),
                 vmmCreateAction("Enable Trusted Launch (securityType: TrustedLaunch) on the target VM.", {
                     check: (item) => ["TrustedLaunch", "ConfidentialVM"].includes(String(item.security_type || "")),
                     evidence: (item) => `Security type: ${String(item.security_type || "Standard")}`,
@@ -1587,8 +1728,10 @@ function vmmBuildRecommendations(vm) {
         });
     } else {
         recs.push({
-            title: "Generation 2 and Trusted Launch",
-            why: "This VM is Generation 2 or likely Generation 2.",
+            title: vmmIsV6V7Target() ? "Generation 2 and Trusted Launch" : "Generation and security profile",
+            why: vmmIsV6V7Target()
+                ? "This VM is Generation 2 or likely Generation 2."
+                : `This VM is Generation 2 or likely Generation 2. Keep the security baseline aligned with the chosen ${targetLabel} target.`,
             actions: [
                 vmmCreateAction("Keep Trusted Launch enabled during redeploy.", {
                     check: (item) => ["TrustedLaunch", "ConfidentialVM"].includes(String(item.security_type || "")),
@@ -1643,30 +1786,41 @@ function vmmBuildRecommendations(vm) {
             ? `Image comes from Azure Compute Gallery (custom image). Publisher: ${publisher}.`
             : `Current marketplace image. Publisher: ${publisher}${imageOffer ? `, offer: ${imageOffer}` : ""}.`,
         actions: [
-            vmmCreateAction("Use a current Generation 2, NVMe-ready, MANA-ready image baseline.", {
-                check: (item) => !vmmHasThirdPartyPublisher(item.image_publisher) && !item.image_gallery_id,
-                evidence: (item) => {
-                    if (item.image_gallery_id) return `Source is a custom gallery image (${String(item.image_gallery_id).split("/").pop() || item.image_gallery_id}).`;
-                    return `Marketplace publisher: ${String(item.image_publisher || "Unknown")}`;
+            vmmCreateAction(
+                vmmIsV6V7Target()
+                    ? "Use a current Generation 2, NVMe-ready, MANA-ready image baseline."
+                    : `Use a current image baseline validated for the selected ${targetLabel} family.`,
+                {
+                    check: (item) => !vmmHasThirdPartyPublisher(item.image_publisher) && !item.image_gallery_id,
+                    evidence: (item) => {
+                        if (item.image_gallery_id) return `Source is a custom gallery image (${String(item.image_gallery_id).split("/").pop() || item.image_gallery_id}).`;
+                        return `Marketplace publisher: ${String(item.image_publisher || "Unknown")}`;
+                    },
                 },
-            }),
+            ),
             vmmCreateAction(
                 imageFromGallery
-                    ? "Rebuild the custom image with Generation 2, NVMe, and MANA support."
+                    ? (vmmIsV6V7Target()
+                        ? "Rebuild the custom image with Generation 2, NVMe, and MANA support."
+                        : `Rebuild the custom image with the guest, boot, and driver profile needed for the selected ${targetLabel} target.`)
                     : "Test boot diagnostics and extension health in pilot before wider rollout.",
             ),
         ],
     });
 
-    // ---- MANA networking ----
+    // ---- Target networking path ----
     recs.push({
-        title: "MANA networking",
+        title: vmmIsV6V7Target() ? "MANA networking" : "Networking compatibility",
         why: `Workload OS is ${osType}.`,
         actions: [
             vmmCreateAction(
-                osType === "Linux"
-                    ? "Confirm Linux kernel ≥ 5.15 and MANA driver readiness in the image."
-                    : "Confirm Windows image patch level and in-box MANA network driver readiness.",
+                vmmIsV6V7Target()
+                    ? (osType === "Linux"
+                        ? "Confirm Linux kernel ≥ 5.15 and MANA driver readiness in the image."
+                        : "Confirm Windows image patch level and in-box MANA network driver readiness.")
+                    : (osType === "Linux"
+                        ? `Confirm Linux kernel, LIS, and NIC driver readiness for the selected ${targetLabel} target.`
+                        : `Confirm Windows patch level and NIC driver readiness for the selected ${targetLabel} target.`),
                 {
                     check: (item) => ["Linux", "Windows"].includes(String(item.os_type || "")),
                     evidence: (item) => `Detected OS: ${String(item.os_type || "Unknown")}`,
@@ -1732,7 +1886,9 @@ function vmmBuildRecommendations(vm) {
     if (vm.hibernation_enabled) {
         recs.push({
             title: "Hibernation — resume required before migration",
-            why: "Hibernation is enabled on this VM. v6/v7 sizes do not currently support hibernation.",
+            why: vmmIsV6V7Target()
+                ? "Hibernation is enabled on this VM. v6/v7 sizes do not currently support hibernation."
+                : `Hibernation is enabled on this VM. Validate hibernation support on the exact ${targetLabel} target before cutover.`,
             actions: [
                 vmmCreateAction("VM is not currently in hibernated state.", {
                     check: (item) => {
@@ -1745,8 +1901,12 @@ function vmmBuildRecommendations(vm) {
                         return `Current power state: ${String(item.power_state || "unknown")}`;
                     },
                 }),
-                vmmCreateAction("Resume (unhibernate) the VM to clear the saved memory state before migration."),
-                vmmCreateAction("Re-validate hibernation support on the exact v6/v7 target before re-enabling."),
+                vmmCreateAction(
+                    vmmIsV6V7Target()
+                        ? "Resume (unhibernate) the VM to clear the saved memory state before migration."
+                        : `Decide whether to keep hibernation enabled on the exact ${targetLabel} target before migration.`,
+                ),
+                vmmCreateAction(`Re-validate hibernation support on the exact ${targetLabel} target before re-enabling.`),
             ],
         });
     }
@@ -1758,7 +1918,7 @@ function vmmBuildRecommendations(vm) {
             ? `VM is zonal (${vm.zones.join(", ")}).`
             : "VM has no explicit zone pinning in current inventory.",
         actions: [
-            vmmCreateAction("Confirm v6/v7 size availability, zone support, and quota in target region/zone."),
+            vmmCreateAction(`Confirm ${targetLabel} size availability, zone support, and quota in target region/zone.`),
             vmmCreateAction("Request quota early and reserve capacity for wave windows."),
         ],
     });
@@ -1771,7 +1931,7 @@ function vmmBuildRecommendations(vm) {
             ? `Azure Hybrid Benefit is configured (${licenseType}).`
             : "Reservations and savings plans are family-scoped.",
         actions: [
-            vmmCreateAction("Replan reservation or savings-plan coverage for target v6/v7 family."),
+            vmmCreateAction(`Replan reservation or savings-plan coverage for target ${targetLabel} family.`),
             vmmCreateAction("Rightsize based on observed usage, not one-to-one vCPU parity."),
             vmmCreateAction("Azure Hybrid Benefit is configured on source VM.", {
                 check: (item) => Boolean(String(item.license_type || "").trim()),
@@ -1787,10 +1947,15 @@ function vmmBuildRecommendations(vm) {
             title: "ISV appliance and vendor support",
             why: "Image publisher may represent a third-party or custom appliance path.",
             actions: [
-                vmmCreateAction("Confirm vendor certification for NVMe and MANA on target family.", {
+                vmmCreateAction(
+                    vmmIsV6V7Target()
+                        ? "Confirm vendor certification for NVMe and MANA on target family."
+                        : `Confirm vendor certification for the selected ${targetLabel} family and retained guest profile.`,
+                    {
                     check: (item) => !vmmHasThirdPartyPublisher(item.image_publisher),
                     evidence: (item) => `Detected publisher: ${String(item.image_publisher || "Unknown")}`,
-                }),
+                    },
+                ),
                 vmmCreateAction("Validate data-plane and failover behavior in pilot."),
             ],
         });
@@ -2012,10 +2177,7 @@ function vmmBuildRecommendationSectionHtml(vm) {
             <span class="badge text-bg-secondary">Human review</span> means the plugin cannot validate the item reliably with the currently available signals.
             Run local scripts on the VM itself when stated, and Azure CLI scripts from a workstation with subscription access.
         </div>
-        <div class="alert alert-light border small mb-3">
-            For more details about these recommendations, refer to
-            <a href="https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan" target="_blank" rel="noopener noreferrer">the Microsoft v6/v7 migration planning documentation</a>.
-        </div>
+        ${vmmBuildReferenceDocumentationHtml()}
         ${filteredSections
             ? `<div class="vmm-reco-list">${filteredSections}</div>`
             : `<div class="alert alert-secondary mb-0">No recommendation actions match the current status filter.</div>`}
@@ -2123,9 +2285,12 @@ function vmmBuildDetailContentHtml(vm, targetSkus) {
 function vmmBuildCandidateTargetSkus(currentSku) {
     const base = String(currentSku || "");
     if (!base) return [];
-    const stem = base.replace(/_v[2-5][a-z]*(?:_promo)?$/i, "");
+    const stem = base.replace(
+        vmmIsV6V7Target() ? /_v[2-5][a-z]*(?:_promo)?$/i : /_v[2-4][a-z]*(?:_promo)?$/i,
+        "",
+    );
     if (stem === base) return [];
-    return [`${stem}_v7`, `${stem}_v6`];
+    return vmmIsV6V7Target() ? [`${stem}_v7`, `${stem}_v6`] : [`${stem}_v5`];
 }
 
 function vmmGetConfidenceDisplay(confidence) {
@@ -2199,7 +2364,7 @@ function vmmBuildPricingTable(sku) {
 }
 
 async function vmmFetchTargetSkuRecommendations(vm) {
-    const cacheKey = `${vm.subscription_id}|${vm.region}|${vm.sku}`;
+    const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.region}|${vm.sku}`;
     const cached = vmmSkuRecommendationCache.get(cacheKey);
     if (cached) return cached;
 
@@ -2241,7 +2406,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
     if (!targetSkus.length) {
         return `
             <div class="alert alert-secondary py-2 mb-0 mt-3">
-                No direct v6/v7 SKU recommendation was auto-matched for this VM.
+                No direct ${escapeHtml(vmmGetModernizationTargetLabel())} SKU recommendation was auto-matched for this VM.
                 Use Deployment Planner to choose a target family manually for this workload.
             </div>
         `;
@@ -2303,7 +2468,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
         <article class="vmm-target-sku-card">
             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
                 <div class="d-flex align-items-center gap-2">
-                    <span class="badge rounded-pill text-bg-primary">Recommended target SKU</span>
+                    <span class="badge rounded-pill text-bg-primary">${escapeHtml(vmmGetRecommendedTargetLabel())}</span>
                     <code class="fs-6">${escapeHtml(primarySku.name || "")}</code>
                 </div>
                 <div>${primaryConfidence}</div>
@@ -2323,7 +2488,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
             <div class="accordion-item">
                 <h2 class="accordion-header">
                     <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#vmmTargetRecoPanel" aria-expanded="false">
-                        <i class="bi bi-bullseye me-2"></i>Recommended v6/v7 target SKU
+                        <i class="bi bi-bullseye me-2"></i>${escapeHtml(vmmGetRecommendedTargetLabel())}
                     </button>
                 </h2>
                 <div id="vmmTargetRecoPanel" class="accordion-collapse collapse show">
@@ -2480,7 +2645,7 @@ function vmmSetView(state) {
     if (state === "no-filter-results") {
         const tbody = document.getElementById("vmm-tbody");
         if (tbody) tbody.innerHTML = `<tr><td colspan="11" class="text-center text-body-secondary py-3">
-            No VMs in modernization scope match the current filters.</td></tr>`;
+            No ${escapeHtml(vmmGetModernizationTargetLabel())} modernization-scope VMs match the current filters.</td></tr>`;
         const countEl = document.getElementById("vmm-table-count");
         if (countEl) countEl.textContent = "0";
     }
@@ -2521,16 +2686,20 @@ async function vmmExportRecommendationChecklist(btn) {
     try {
         const recs = vmmBuildRecommendations(vm);
         const targetSkus = await vmmFetchTargetSkuRecommendations(vm);
+        const targetLabel = vmmGetModernizationTargetLabel();
+        const referenceDocs = vmmGetModernizationTargetConfig().docs || [];
         const lines = [
             `# VM SKU modernization checklist — ${vm.name || "VM"}`,
             "",
+            `- Modernization target: ${targetLabel}`,
+            `- Modernization scope: source SKU currently in ${vmmGetModernizationScopeLabel()} families`,
             `- Resource group: ${vm.resource_group || "Unknown"}`,
             `- Subscription: ${vm.subscription_name || vm.subscription_id || "Unknown"}`,
             `- Region: ${vm.region || "Unknown"}`,
             `- Source SKU: ${vm.sku || "Unknown"}`,
             `- Hyper-V generation: ${vm.generation || "Unknown"}`,
             `- OS type: ${vm.os_type || "Unknown"}`,
-            `- Suggested target SKU: ${vmmGetSuggestedTargetSku(vm) || "Not inferred"}`,
+            `- Suggested ${targetLabel} target SKU: ${vmmGetSuggestedTargetSku(vm) || "Not inferred"}`,
             "",
             "## Recommendation usage guide",
             "",
@@ -2560,7 +2729,7 @@ async function vmmExportRecommendationChecklist(btn) {
         }
 
         if (targetSkus.length) {
-            lines.push("## Suggested target SKUs", "");
+            lines.push(`## Suggested ${targetLabel} target SKUs`, "");
             for (const sku of targetSkus) {
                 const confidence = sku?.confidence?.label && typeof sku?.confidence?.score === "number"
                     ? `${sku.confidence.label} (${Math.round(sku.confidence.score)})`
@@ -2571,16 +2740,17 @@ async function vmmExportRecommendationChecklist(btn) {
             lines.push("");
         }
 
-        lines.push(
-            "## Reference documentation",
-            "",
-            "- Microsoft v6/v7 migration planning guidance: https://learn.microsoft.com/en-us/azure/virtual-machines/migration/sizes/sizes-v6-v7-migration-plan",
-            "",
-        );
+        if (referenceDocs.length) {
+            lines.push("## Reference documentation", "");
+            for (const doc of referenceDocs) {
+                lines.push(`- ${doc.label}: ${doc.href}`);
+            }
+            lines.push("");
+        }
 
         vmmDownloadTextFile(
             lines.join("\n"),
-            `vm-sku-modernization-checklist-${vmmSanitizeFilePart(vm.name)}.md`,
+            `vm-sku-modernization-${vmmSanitizeFilePart(targetLabel)}-checklist-${vmmSanitizeFilePart(vm.name)}.md`,
             "text/markdown;charset=utf-8",
         );
     } finally {
@@ -2593,11 +2763,14 @@ async function vmmExportRecommendationChecklist(btn) {
 
 function vmmExportCSV() {
     const headers = [
+        "Modernization Target", "Modernization Scope",
         "VM Name", "Resource Group", "Subscription", "Subscription ID",
         "Region", "SKU", "Hyper-V Generation", "OS Type", "Image Publisher",
         "Disk Controller", "Zones", "Migration Readiness (inferred)",
     ];
     const rows = vmmSortedVms().map(v => [
+        vmmGetModernizationTargetLabel(),
+        vmmGetModernizationScopeLabel(),
         v.name,
         v.resource_group,
         v.subscription_name,
@@ -2611,7 +2784,10 @@ function vmmExportCSV() {
         (v.zones || []).join(";"),
         vmmGetReadinessAssessment(v).level,
     ]);
-    downloadCSV([headers, ...rows], "vm-sku-modernization.csv");
+    downloadCSV(
+        [headers, ...rows],
+        `vm-sku-modernization-${vmmSanitizeFilePart(vmmGetModernizationTargetLabel())}.csv`,
+    );
 }
 
 // Expose for app.js subscription refresh callbacks
