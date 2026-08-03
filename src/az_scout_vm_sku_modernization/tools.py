@@ -20,11 +20,15 @@ def list_migration_candidate_vms(
         str | None,
         Field(description="Optional Azure AD tenant ID to scope the request."),
     ] = None,
+    modernization_target: Annotated[
+        str,
+        Field(description="Modernization target: 'v5' or 'v6v7' (default)."),
+    ] = "v6v7",
 ) -> str:
-    """List legacy-SKU Azure VMs in scope for v6/v7 migration planning.
+    """List legacy-SKU Azure VMs in scope for migration planning.
 
-    Returns inventory records for VMs using v2-v5 SKU families
-    (e.g. Standard_D4s_v3, Standard_E8ds_v5) across the given subscriptions,
+    Returns inventory records for VMs using legacy SKU families across the
+    given subscriptions, filtered to the chosen modernization target (v5 or v6v7),
     with fields:
     name, resource_group, subscription_id, subscription_name, region, sku,
     generation, os_type, image_publisher, disk_controller_type, zones.
@@ -45,5 +49,7 @@ def list_migration_candidate_vms(
     results: list[dict[str, Any]] = []
     for sub_id in subscription_ids:
         sub_name = known_subs.get(sub_id, sub_id)
-        results.extend(_fetch_vms_for_subscription(sub_id, sub_name, tenant_id))
+        results.extend(
+            _fetch_vms_for_subscription(sub_id, sub_name, tenant_id, modernization_target)
+        )
     return json.dumps(results, indent=2)
