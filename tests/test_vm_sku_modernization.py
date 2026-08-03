@@ -123,3 +123,189 @@ def test_deep_check_route_success() -> None:
     assert data["power_state"] == "running"
     assert data["is_hibernated"] is False
     assert data["accelerated_networking_enabled"] is True
+
+
+# ============================================================================
+# Scoring tests: migration effort calculation
+# ============================================================================
+def test_migration_effort_gen2_low_complexity() -> None:
+    """Gen2 + NVMe + TrustedLaunch + Microsoft publisher = Low effort."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "V2",
+        "disk_controller_type": "NVMe",
+        "security_type": "TrustedLaunch",
+        "image_publisher": "MicrosoftWindowsServer",
+        "hibernation_enabled": False,
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "Low"
+    assert result["score"] == 0
+    assert "Generation 2 profile" in result["tooltip"]
+    assert "NVMe" in result["tooltip"]
+
+
+def test_migration_effort_gen1_high_complexity() -> None:
+    """Gen1 + multiple other blockers should give High effort."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "V1",
+        "disk_controller_type": "SCSI",  # +1 blocker
+        "security_type": "Standard",  # +1 blocker (no TL)
+        "image_publisher": "MicrosoftWindowsServer",
+        "hibernation_enabled": True,  # +1 blocker
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "High"
+    assert result["score"] == 5  # 2 (Gen1) + 1 (SCSI) + 1 (no TL) + 1 (hibernation)
+    assert "Generation 1 profile" in result["tooltip"]
+
+
+def test_migration_effort_gen1_alone_moderate() -> None:
+    """Gen1 alone (no other blockers) = Moderate effort (score 2)."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "V1",
+        "disk_controller_type": "NVMe",
+        "security_type": "TrustedLaunch",
+        "image_publisher": "MicrosoftWindowsServer",
+        "hibernation_enabled": False,
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "Moderate"
+    assert result["score"] == 2
+    assert "Generation 1 profile" in result["tooltip"]
+
+
+def test_migration_effort_multiple_blockers() -> None:
+    """Multiple blockers accumulate: non-NVMe + no TrustedLaunch + third-party = Moderate."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "V2 (inferred)",
+        "disk_controller_type": "SCSI",
+        "security_type": "Standard",
+        "image_publisher": "Canonical",
+        "hibernation_enabled": False,
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "Moderate"  # 1+1+1 = 3 points
+    assert result["score"] == 3
+    assert "not reported as NVMe" in result["tooltip"]
+    assert "Trusted Launch not" in result["tooltip"]
+    assert "Third-party" in result["tooltip"]
+
+
+def test_migration_effort_hibernation_blocker() -> None:
+    """Hibernation enabled adds +1 point."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "V2",
+        "disk_controller_type": "NVMe",
+        "security_type": "TrustedLaunch",
+        "image_publisher": "MicrosoftWindowsServer",
+        "hibernation_enabled": True,
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "Low"  # 1 point from hibernation
+    assert result["score"] == 1
+    assert "Hibernation" in result["tooltip"]
+    assert "resume step" in result["tooltip"]
+
+
+def test_migration_effort_all_blockers() -> None:
+    """All blockers together: Gen1 + SCSI + no TrustedLaunch + third-party + hibernation."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "V1",
+        "disk_controller_type": "SCSI",
+        "security_type": "Standard",
+        "image_publisher": "RedHat",
+        "hibernation_enabled": True,
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "High"
+    assert result["score"] == 6  # 2+1+1+1+1
+    assert "Generation 1" in result["tooltip"]
+    assert "not reported as NVMe" in result["tooltip"]
+    assert "Third-party" in result["tooltip"]
+    assert "Hibernation" in result["tooltip"]
+
+
+def test_migration_effort_unknown_generation() -> None:
+    """Unknown generation adds +1 point."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {
+        "generation": "Unknown",
+        "disk_controller_type": "NVMe",
+        "security_type": "TrustedLaunch",
+        "image_publisher": "MicrosoftWindowsServer",
+        "hibernation_enabled": False,
+    }
+    result = calculate_migration_effort(vm)
+    assert result["level"] == "Low"
+    assert result["score"] == 1
+    assert "generation is unknown" in result["tooltip"]
+
+
+def test_migration_effort_missing_fields_defaults() -> None:
+    """Missing VM fields should use safe defaults (empty publisher counts as third-party)."""
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    vm = {}  # All fields missing
+    result = calculate_migration_effort(vm)
+    # Unknown gen (+1) + SCSI (+1) + no TL (+1) + empty publisher is third-party (+1) = 4
+    assert result["level"] == "High"
+    assert result["score"] == 4
+    assert "unknown" in result["tooltip"].lower()
+
+
+# ============================================================================
+# Edge cases and integration
+# ============================================================================
+def test_vm_record_with_scoring() -> None:
+    """Verify that _build_vm_record produces fields needed by scoring."""
+    from az_scout_vm_sku_modernization.routes import _build_vm_record
+    from az_scout_vm_sku_modernization.scoring import calculate_migration_effort
+
+    arm_vm = {
+        "name": "prod-vm-01",
+        "id": (
+            "/subscriptions/sub1/resourceGroups/prod-rg"
+            "/providers/Microsoft.Compute/virtualMachines/prod-vm-01"
+        ),
+        "location": "westus",
+        "zones": ["2"],
+        "properties": {
+            "hardwareProfile": {"vmSize": "Standard_D4s_v3"},
+            "storageProfile": {
+                "imageReference": {
+                    "publisher": "Canonical",
+                    "offer": "0001-com-ubuntu-server-focal",
+                    "sku": "20_04-lts-gen2",
+                },
+                "osDisk": {"osType": "Linux", "diskSizeGB": 64, "diskControllerType": "NVMe"},
+                "dataDisks": [],
+            },
+            "securityProfile": {
+                "securityType": "Standard",
+            },
+            "additionalCapabilities": {"hibernationEnabled": False},
+        },
+    }
+
+    record = _build_vm_record(arm_vm, "sub1", "Production")
+    effort = calculate_migration_effort(record)
+
+    # Canonical (third-party) + no TrustedLaunch + v3 SKU (Gen2 inferred) + NVMe
+    # Score: 1 (third-party) + 1 (no TL) = 2 → Moderate
+    assert effort["level"] in ("Low", "Moderate")
+    assert "Third-party" in effort["tooltip"]
+    assert record["image_publisher"] == "Canonical"
+    assert record["security_type"] == "Standard"
