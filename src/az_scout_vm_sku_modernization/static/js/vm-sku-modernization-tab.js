@@ -72,6 +72,8 @@ const vmmDetailRecommendationCache = new Map();
 const vmmDeepCheckState = new Map(); // key: `sub|rg|name` → result object | "pending" | "error"
 let vmmCurrentDetailVm = null;
 let vmmCurrentDetailTargetSkus = [];
+let vmmCurrentDetailSkuDetail = null;
+let vmmCurrentDetailCurrency = "USD";
 let vmmDetailStatusFilter = "all";
 let vmmDetailActiveTab = "overview";
 let vmmModernizationTarget = "v6v7";
@@ -180,6 +182,8 @@ function vmmResetLoadedInventory() {
     vmmDisplayedVms = [];
     vmmCurrentDetailVm = null;
     vmmCurrentDetailTargetSkus = [];
+    vmmCurrentDetailSkuDetail = null;
+    vmmCurrentDetailCurrency = "USD";
     vmmSkuRecommendationCache.clear();
     vmmDetailRecommendationCache.clear();
     vmmDeepCheckState.clear();
@@ -1447,7 +1451,11 @@ function vmmSetDetailTab(tab) {
 function vmmRenderCurrentDetailContent() {
     const contentEl = document.getElementById("vmm-detail-content");
     if (!contentEl || !vmmCurrentDetailVm) return;
-    contentEl.innerHTML = vmmBuildDetailContentHtml(vmmCurrentDetailVm, vmmCurrentDetailTargetSkus);
+    contentEl.innerHTML = vmmBuildDetailContentHtml(
+        vmmCurrentDetailVm,
+        vmmCurrentDetailTargetSkus,
+        vmmCurrentDetailSkuDetail,
+    );
     contentEl.classList.remove("d-none");
     if (window.bootstrap?.Tooltip) {
         contentEl.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
@@ -1456,6 +1464,34 @@ function vmmRenderCurrentDetailContent() {
                 placement: "top",
             });
         });
+    }
+    const currencySelect = contentEl.querySelector("#pricing-modal-currency-select");
+    if (currencySelect) {
+        currencySelect.addEventListener("change", () => {
+            vmmRefreshCurrentDetailCurrency(currencySelect.value);
+        });
+    }
+}
+
+async function vmmRefreshCurrentDetailCurrency(currency) {
+    const vm = vmmCurrentDetailVm;
+    const sku = vmmCurrentDetailTargetSkus[0];
+    if (!vm || !sku?.name || !currency) return;
+
+    const contentEl = document.getElementById("vmm-detail-content");
+    if (!contentEl) return;
+    contentEl.setAttribute("aria-busy", "true");
+    try {
+        vmmCurrentDetailCurrency = currency;
+        vmmCurrentDetailSkuDetail = await vmmFetchTargetSkuDetail(vm, sku.name, currency);
+        vmmRenderCurrentDetailContent();
+    } catch (err) {
+        contentEl.insertAdjacentHTML(
+            "afterbegin",
+            `<div class="alert alert-danger py-2 small">Failed to refresh pricing: ${escapeHtml(String(err))}</div>`,
+        );
+    } finally {
+        contentEl.removeAttribute("aria-busy");
     }
 }
 
@@ -2197,7 +2233,7 @@ function vmmBuildOverviewSectionHtml(vm) {
     `;
 }
 
-function vmmBuildDetailContentHtml(vm, targetSkus) {
+function vmmBuildDetailContentHtml(vm, targetSkus, targetSkuDetail = null) {
     const vmName = escapeHtml(vm.name || "VM");
     const sku = escapeHtml(vm.sku || "Unknown");
     const region = escapeHtml(vm.region || "Unknown");
@@ -2240,7 +2276,7 @@ function vmmBuildDetailContentHtml(vm, targetSkus) {
                 ${vmmBuildRecommendationSectionHtml(vm)}
             </div>
         </div>
-        ${vmmBuildTargetRecommendationSection(vm, targetSkus)}
+        ${vmmBuildTargetRecommendationSection(vm, targetSkus, targetSkuDetail)}
     `;
 }
 
@@ -2432,7 +2468,28 @@ async function vmmFetchTargetSkuRecommendations(vm) {
     return top;
 }
 
-function vmmBuildTargetRecommendationSection(vm, targetSkus) {
+async function vmmFetchTargetSkuDetail(vm, skuName, currency) {
+    const params = new URLSearchParams({
+        region: vm.region,
+        subscriptionId: vm.subscription_id,
+        sku: skuName,
+        currencyCode: currency,
+    });
+    const data = await apiFetch(`/api/sku-detail?${params}${tenantQS("&")}`);
+    if (!data || data.error) {
+        throw new Error(data?.error || `No detail returned for ${skuName}`);
+    }
+    return data;
+}
+
+function vmmGetTargetSkuQuota(primarySku, detail) {
+    const quota = primarySku?.quota || detail?.quota || detail?.profile?.quota;
+    return quota && typeof quota === "object"
+        ? quota
+        : { limit: null, used: null, remaining: null };
+}
+
+function vmmBuildTargetRecommendationSection(vm, targetSkus, detail = null) {
     if (!targetSkus.length) {
         return `
             <div class="alert alert-secondary py-2 mb-0 mt-3">
@@ -2444,11 +2501,14 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
 
     const primarySku = targetSkus[0];
     const alternateSkus = targetSkus.slice(1);
-    const primaryConfidence = vmmGetConfidenceDisplay(primarySku.confidence);
-    const primaryProfile = vmmBuildSharedVmProfile(primarySku);
+    const confidence = primarySku.confidence || detail?.confidence;
+    const primaryConfidence = vmmGetConfidenceDisplay(confidence);
+    const primaryProfile = detail?.profile || vmmBuildSharedVmProfile(primarySku);
+    const quota = vmmGetTargetSkuQuota(primarySku, detail);
+    const vcpus = Number(primaryProfile.capabilities?.vCPUs || 0);
 
-    const sharedConfidenceSection = primarySku.confidence && vmmComponents.renderConfidenceBreakdown
-        ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
+    const sharedConfidenceSection = confidence && vmmComponents.renderConfidenceBreakdown
+        ? vmmComponents.renderConfidenceBreakdown(confidence)
         : `
             <div class="vmm-target-block mb-3">
                 <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence ${vmmBuildConfidenceInfo()}</h6>
@@ -2457,7 +2517,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
         `;
 
     const sharedZoneSection = vmmComponents.renderZoneAvailability
-        ? vmmComponents.renderZoneAvailability(primaryProfile, primarySku.confidence, {})
+        ? vmmComponents.renderZoneAvailability(primaryProfile, confidence, {})
         : `
             <div class="vmm-target-block mb-3">
                 <h6><i class="bi bi-pin-map me-1"></i>Zone availability</h6>
@@ -2465,14 +2525,18 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
             </div>
         `;
 
-    const sharedPricingSection = primarySku.pricing && vmmComponents.renderPricingPanel
-        ? vmmComponents.renderPricingPanel(primarySku.pricing)
+    const pricingData = detail || primarySku.pricing || {};
+    const sharedPricingSection = vmmComponents.renderPricingPanel
+        ? vmmComponents.renderPricingPanel(pricingData)
         : `
             <div class="vmm-target-block">
                 <h6><i class="bi bi-cash-coin me-1"></i>Pricing</h6>
                 ${vmmBuildPricingTable(primarySku)}
             </div>
         `;
+    const sharedQuotaSection = vmmComponents.renderQuotaPanel
+        ? vmmComponents.renderQuotaPanel(quota, vcpus, confidence)
+        : "";
 
     const alternateSection = alternateSkus.length
         ? `
@@ -2507,6 +2571,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
                 : vmmBuildFallbackVmProfile(vm, primarySku)}
             ${sharedConfidenceSection}
             ${sharedZoneSection}
+            ${sharedQuotaSection}
             ${sharedPricingSection}
             ${alternateSection}
         </article>
@@ -2553,6 +2618,10 @@ async function vmmOpenVmDetail(vm) {
         const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.resource_group}|${vm.name}`;
         const targetSkus = await vmmFetchTargetSkuRecommendations(vm);
         vmmCurrentDetailTargetSkus = targetSkus;
+        vmmCurrentDetailCurrency = "USD";
+        vmmCurrentDetailSkuDetail = targetSkus.length
+            ? await vmmFetchTargetSkuDetail(vm, targetSkus[0].name, vmmCurrentDetailCurrency)
+            : null;
         const cachedRecommendations = vmmDetailRecommendationCache.get(cacheKey);
         if (cachedRecommendations) {
             vmmRenderCurrentDetailContent(cachedRecommendations);
