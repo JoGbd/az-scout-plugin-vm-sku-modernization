@@ -1449,6 +1449,14 @@ function vmmRenderCurrentDetailContent() {
     if (!contentEl || !vmmCurrentDetailVm) return;
     contentEl.innerHTML = vmmBuildDetailContentHtml(vmmCurrentDetailVm, vmmCurrentDetailTargetSkus);
     contentEl.classList.remove("d-none");
+    if (window.bootstrap?.Tooltip) {
+        contentEl.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
+            window.bootstrap.Tooltip.getOrCreateInstance(element, {
+                delay: { show: 0, hide: 100 },
+                placement: "top",
+            });
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2293,35 +2301,40 @@ function vmmBuildProfileRow(label, value) {
     `;
 }
 
-function vmmBuildTargetVmProfile(vm, sku) {
+function vmmBuildSharedVmProfile(sku) {
     const capabilities = sku?.capabilities || {};
-    const zones = Array.isArray(sku?.zones) ? sku.zones : [];
-    const restrictions = Array.isArray(sku?.restrictions)
-        ? sku.restrictions.filter((restriction) => restriction?.type === "Zone")
-        : [];
-    const vcpus = capabilities.vcpus ?? capabilities.vCPUs ?? capabilities.vcpu ?? sku?.vcpus;
-    const memory = capabilities.memoryInMB ?? capabilities.memoryMB ?? capabilities.memory ?? sku?.memoryInMB;
-    const architecture = capabilities.architecture ?? capabilities.cpuArchitecture ?? sku?.architecture;
+    const memoryMb = capabilities.memoryInMB ?? capabilities.memoryMB;
+    return {
+        zones: Array.isArray(sku?.zones) ? sku.zones : [],
+        restrictions: Array.isArray(sku?.restrictions) ? sku.restrictions : [],
+        capabilities: {
+            ...capabilities,
+            vCPUs: capabilities.vCPUs ?? capabilities.vcpus ?? capabilities.vcpu ?? sku?.vcpus,
+            MemoryGB: capabilities.MemoryGB ?? (memoryMb !== undefined ? memoryMb / 1024 : undefined)
+                ?? capabilities.memory,
+            CpuArchitectureType: capabilities.CpuArchitectureType
+                ?? capabilities.architecture
+                ?? capabilities.cpuArchitecture
+                ?? sku?.architecture,
+        },
+    };
+}
 
+function vmmBuildFallbackVmProfile(vm, sku) {
+    const capabilities = sku?.capabilities || {};
     return `
         <div class="vm-profile-grid mb-3">
             <section class="vm-profile-card">
-                <div class="vm-profile-card-title">
-                    <i class="bi bi-display me-1" aria-hidden="true"></i>VM Profile
-                </div>
+                <div class="vm-profile-card-title">VM Profile</div>
                 ${vmmBuildProfileRow("Target SKU", sku?.name)}
                 ${vmmBuildProfileRow("Region", vm?.region)}
                 ${vmmBuildProfileRow("Source SKU", vm?.sku)}
-                ${vmmBuildProfileRow("Zones", zones.length ? zones : "Regional")}
             </section>
             <section class="vm-profile-card">
-                <div class="vm-profile-card-title">
-                    <i class="bi bi-cpu me-1" aria-hidden="true"></i>Target capabilities
-                </div>
-                ${vmmBuildProfileRow("vCPUs", vcpus)}
-                ${vmmBuildProfileRow("Memory", memory !== undefined ? `${memory} MB` : undefined)}
-                ${vmmBuildProfileRow("Architecture", architecture)}
-                ${vmmBuildProfileRow("Zone restrictions", restrictions.length || "None")}
+                <div class="vm-profile-card-title">Target capabilities</div>
+                ${vmmBuildProfileRow("vCPUs", capabilities.vCPUs ?? capabilities.vcpus)}
+                ${vmmBuildProfileRow("Memory", capabilities.MemoryGB ?? capabilities.memoryInMB)}
+                ${vmmBuildProfileRow("Architecture", capabilities.CpuArchitectureType ?? capabilities.architecture)}
             </section>
         </div>
     `;
@@ -2432,25 +2445,16 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
     const primarySku = targetSkus[0];
     const alternateSkus = targetSkus.slice(1);
     const primaryConfidence = vmmGetConfidenceDisplay(primarySku.confidence);
-    const primaryProfile = {
-        zones: Array.isArray(primarySku.zones) ? primarySku.zones : [],
-        restrictions: Array.isArray(primarySku.restrictions) ? primarySku.restrictions : [],
-        capabilities: primarySku.capabilities || {},
-    };
+    const primaryProfile = vmmBuildSharedVmProfile(primarySku);
 
-    const sharedConfidenceSection = `
-        <div class="vmm-confidence-wrapper">
-            ${vmmBuildConfidenceInfo()}
-            ${primarySku.confidence && vmmComponents.renderConfidenceBreakdown
-                ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
-                : `
-                    <div class="vmm-target-block mb-3">
-                        <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence</h6>
-                        <div class="small">${primaryConfidence}</div>
-                    </div>
-                `}
-        </div>
-    `;
+    const sharedConfidenceSection = primarySku.confidence && vmmComponents.renderConfidenceBreakdown
+        ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
+        : `
+            <div class="vmm-target-block mb-3">
+                <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence ${vmmBuildConfidenceInfo()}</h6>
+                <div class="small">${primaryConfidence}</div>
+            </div>
+        `;
 
     const sharedZoneSection = vmmComponents.renderZoneAvailability
         ? vmmComponents.renderZoneAvailability(primaryProfile, primarySku.confidence, {})
@@ -2495,7 +2499,12 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
                 </div>
                 <div>${primaryConfidence}</div>
             </div>
-            ${vmmBuildTargetVmProfile(vm, primarySku)}
+            <div class="small text-body-secondary mb-3">
+                Source: <code>${escapeHtml(vm?.sku || "—")}</code> · ${escapeHtml(vm?.region || "—")}
+            </div>
+            ${vmmComponents.renderVmProfile
+                ? vmmComponents.renderVmProfile(primaryProfile)
+                : vmmBuildFallbackVmProfile(vm, primarySku)}
             ${sharedConfidenceSection}
             ${sharedZoneSection}
             ${sharedPricingSection}
