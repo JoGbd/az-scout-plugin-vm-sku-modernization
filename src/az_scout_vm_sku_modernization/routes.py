@@ -12,6 +12,8 @@ from az_scout.azure_api import ArmAuthorizationError, ArmRequestError
 from fastapi import APIRouter, Query
 from starlette.responses import JSONResponse
 
+from .scoring import calculate_migration_effort
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Plugin: vm-sku-modernization"])
@@ -51,17 +53,18 @@ def _detect_generation(vm: dict[str, Any]) -> str:
     2. imageReference.sku containing a Gen 2 marker (gen2, -g2)
     3. SKU family: v4/v5 → V2 likely; v2/v3 → V1 likely
     """
-    props = vm.get("properties", {})
+    props = vm.get("properties") or {}
 
-    security_type = props.get("securityProfile", {}).get("securityType", "")
+    security_type = (props.get("securityProfile") or {}).get("securityType", "")
     if security_type in ("TrustedLaunch", "ConfidentialVM"):
         return "V2"
 
-    img_sku = props.get("storageProfile", {}).get("imageReference", {}).get("sku", "").lower()
+    img_sku = ((props.get("storageProfile") or {}).get("imageReference") or {}).get("sku", "") or ""
+    img_sku = str(img_sku).lower()
     if any(m in img_sku for m in _GEN2_IMAGE_MARKERS):
         return "V2"
 
-    vm_size = props.get("hardwareProfile", {}).get("vmSize", "")
+    vm_size = (props.get("hardwareProfile") or {}).get("vmSize", "") or ""
     match = re.search(r"_v([2-5])", vm_size, re.IGNORECASE)
     if match:
         gen_num = int(match.group(1))
@@ -86,26 +89,26 @@ def _build_vm_record(
     sub_name: str,
 ) -> dict[str, Any]:
     """Transform an ARM VM object into the dashboard record shape."""
-    props = vm.get("properties", {})
-    storage = props.get("storageProfile", {})
-    image_ref = storage.get("imageReference", {})
-    os_disk = storage.get("osDisk", {})
-    security_profile = props.get("securityProfile", {})
-    uefi_settings = security_profile.get("uefiSettings", {})
-    additional_caps = props.get("additionalCapabilities", {})
+    props = vm.get("properties") or {}
+    storage = props.get("storageProfile") or {}
+    image_ref = storage.get("imageReference") or {}
+    os_disk = storage.get("osDisk") or {}
+    security_profile = props.get("securityProfile") or {}
+    uefi_settings = security_profile.get("uefiSettings") or {}
+    additional_caps = props.get("additionalCapabilities") or {}
 
-    return {
-        "name": vm.get("name", ""),
+    record = {
+        "name": vm.get("name") or "",
         "resource_group": _parse_resource_group(vm.get("id", "")),
         "subscription_id": sub_id,
         "subscription_name": sub_name,
-        "region": vm.get("location", ""),
-        "sku": props.get("hardwareProfile", {}).get("vmSize", ""),
+        "region": vm.get("location") or "",
+        "sku": (props.get("hardwareProfile") or {}).get("vmSize") or "",
         "generation": _detect_generation(vm),
         "os_type": os_disk.get("osType", ""),
         "image_publisher": image_ref.get("publisher", ""),
         "disk_controller_type": os_disk.get("diskControllerType", "SCSI"),
-        "zones": vm.get("zones", []),
+        "zones": vm.get("zones") or [],
         # Security profile
         "security_type": security_profile.get("securityType", "Standard"),
         "secure_boot_enabled": uefi_settings.get("secureBootEnabled", False),
@@ -114,12 +117,14 @@ def _build_vm_record(
         "image_offer": image_ref.get("offer", ""),
         "image_gallery_id": image_ref.get("id", ""),
         # Storage
-        "data_disk_count": len(storage.get("dataDisks", [])),
+        "data_disk_count": len(storage.get("dataDisks") or []),
         "os_disk_size_gb": os_disk.get("diskSizeGB") or 0,
         # Features
-        "hibernation_enabled": additional_caps.get("hibernationEnabled", False),
-        "license_type": props.get("licenseType", ""),
+        "hibernation_enabled": bool(additional_caps.get("hibernationEnabled", False)),
+        "license_type": props.get("licenseType") or "",
     }
+    record["migration_effort"] = calculate_migration_effort(record)
+    return record
 
 
 def _fetch_vms_for_subscription(
@@ -127,6 +132,7 @@ def _fetch_vms_for_subscription(
     sub_name: str,
     tenant_id: str | None,
     modernization_target: str,
+    warnings: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """List in-scope VMs for one subscription and modernization target."""
     url = (
@@ -140,15 +146,22 @@ def _fetch_vms_for_subscription(
             tenant_id=tenant_id,
         )
     except ArmAuthorizationError:
-        logger.warning("No access to subscription %s — skipping", sub_id)
+        message = f"Could not read subscription {sub_id}: authorization denied"
+        logger.warning("%s — skipping", message)
+        if warnings is not None:
+            warnings.append(message)
         return []
     except ArmRequestError as exc:
-        logger.warning("ARM error for subscription %s: %s — skipping", sub_id, exc)
+        message = f"Could not read subscription {sub_id}: {exc}"
+        logger.warning("%s — skipping", message)
+        if warnings is not None:
+            warnings.append(message)
         return []
 
     records: list[dict[str, Any]] = []
     for vm in vms:
-        vm_size = vm.get("properties", {}).get("hardwareProfile", {}).get("vmSize", "")
+        props = vm.get("properties") or {}
+        vm_size = (props.get("hardwareProfile") or {}).get("vmSize") or ""
         if _is_migration_candidate(vm_size, modernization_target):
             records.append(_build_vm_record(vm, sub_id, sub_name))
     return records
@@ -183,11 +196,13 @@ async def get_migration_vms(
 
     # Resolve subscription names from ARM discovery
     known_subs: dict[str, str] = {}
+    warnings: list[str] = []
     try:
         all_subs = await asyncio.to_thread(azure_api.list_subscriptions, tenantId)
-        known_subs = {s["id"]: s.get("name", s["id"]) for s in all_subs}
-    except Exception:
+        known_subs = {s["id"]: s.get("name", s["id"]) for s in all_subs if s.get("id")}
+    except Exception as exc:
         logger.debug("Could not resolve subscription names — using IDs as names")
+        warnings.append(f"Could not resolve subscription names: {exc}")
 
     results: list[dict[str, Any]] = []
     for sub_id in sub_ids:
@@ -198,10 +213,11 @@ async def get_migration_vms(
             sub_name,
             tenantId,
             target,
+            warnings,
         )
         results.extend(items)
 
-    return JSONResponse(results)
+    return JSONResponse({"items": results, "warnings": warnings})
 
 
 def _fetch_vm_deep_check(
@@ -222,10 +238,11 @@ def _fetch_vm_deep_check(
         tenant_id=tenant_id,
     )
 
-    result: dict[str, Any] = {}
+    result: dict[str, Any] = {"warnings": []}
 
     # Power state from instanceView statuses
-    instance_view = vm_data.get("properties", {}).get("instanceView", {})
+    vm_props = vm_data.get("properties") or {}
+    instance_view = vm_props.get("instanceView") or {}
     statuses = instance_view.get("statuses", [])
     power_code = next(
         (s.get("code", "") for s in statuses if s.get("code", "").startswith("PowerState/")),
@@ -235,8 +252,8 @@ def _fetch_vm_deep_check(
     result["is_hibernated"] = power_code == "PowerState/hibernated"
 
     # NIC accelerated networking (check up to 3 NICs)
-    nics = vm_data.get("properties", {}).get("networkProfile", {}).get("networkInterfaces", [])
-    nic_ids = [nic.get("id", "") for nic in nics if nic.get("id")]
+    nics = (vm_props.get("networkProfile") or {}).get("networkInterfaces") or []
+    nic_ids = [nic.get("id", "") for nic in nics if isinstance(nic, dict) and nic.get("id")]
     accel_results: list[bool] = []
     for nic_id in nic_ids[:3]:
         try:
@@ -248,8 +265,10 @@ def _fetch_vm_deep_check(
             accel_results.append(
                 bool(nic_data.get("properties", {}).get("enableAcceleratedNetworking", False))
             )
-        except Exception:
-            logger.debug("Could not fetch NIC %s — skipping", nic_id)
+        except Exception as exc:
+            message = f"Could not check NIC {nic_id}: {exc}"
+            logger.warning("%s — skipping", message)
+            result["warnings"].append(message)
 
     if accel_results:
         result["accelerated_networking_enabled"] = all(accel_results)

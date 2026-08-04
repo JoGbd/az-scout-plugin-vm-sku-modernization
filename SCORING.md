@@ -59,8 +59,8 @@ Each factor adds points to the migration effort score:
 
 | Factor | Points | Reason |
 |--------|--------|--------|
-| First-party Microsoft (e.g., `MicrosoftWindowsServer`, `Canonical` published by Microsoft) | 0 | Publisher has validated v6/v7 compatibility. |
-| Third-party or custom (e.g., `RedHat`, `SUSE`, ISV images) | **+1** | Vendor may require explicit support statement or driver updates. |
+| Publisher beginning with `Microsoft` (for example, `MicrosoftWindowsServer`) | 0 | Conservative plugin classification; this is not a compatibility attestation. |
+| Canonical, third-party, or custom publisher | **+1** | Vendor may require an explicit support statement or driver updates. |
 
 **Action:** Contact vendor to confirm v6/v7 support and any required OS-level updates.
 
