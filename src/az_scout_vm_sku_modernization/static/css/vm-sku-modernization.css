@@ -617,6 +617,37 @@
     margin: 0.3rem 0 0.35rem;
 }
 
+.vmm-overview-info {
+    cursor: help;
+    color: var(--bs-secondary-color);
+    margin-left: 0.2rem;
+}
+
+.vmm-overview-info:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 2px;
+    border-radius: 50%;
+}
+
+.vmm-confidence-wrapper {
+    position: relative;
+}
+
+.vmm-confidence-info {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    cursor: help;
+    color: var(--bs-secondary-color);
+    z-index: 1;
+}
+
+.vmm-confidence-info:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 2px;
+    border-radius: 50%;
+}
+
 .vmm-wave-detail-card h6 {
     margin-bottom: 0.65rem;
 }

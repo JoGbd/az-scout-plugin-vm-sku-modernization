@@ -100,7 +100,37 @@ def test_vms_route_passes_selected_modernization_target() -> None:
         resp = client.get("/vms", params={"subscriptions": "sub1", "target": "v5"})
 
     assert resp.status_code == 200
-    fetch_vms.assert_called_once_with("sub1", "Subscription One", None, "v5")
+    assert resp.json() == {"items": [], "warnings": []}
+    fetch_vms.assert_called_once_with("sub1", "Subscription One", None, "v5", [])
+
+
+def test_vms_route_requires_subscriptions() -> None:
+    resp = client.get("/vms")
+    assert resp.status_code == 400
+    assert "subscriptions" in resp.json()["error"]
+
+
+def test_vms_route_rejects_unknown_target() -> None:
+    resp = client.get("/vms", params={"subscriptions": "sub1", "target": "v8"})
+    assert resp.status_code == 422
+
+
+def test_vms_route_returns_items_and_warnings() -> None:
+    record = {"name": "vm1", "migration_effort": {"level": "Low"}}
+    with (
+        patch(
+            "az_scout_vm_sku_modernization.routes.azure_api.list_subscriptions",
+            return_value=[{"id": "sub1", "name": "Subscription One"}],
+        ),
+        patch(
+            "az_scout_vm_sku_modernization.routes._fetch_vms_for_subscription",
+            return_value=[record],
+        ),
+    ):
+        resp = client.get("/vms", params={"subscriptions": "sub1"})
+    assert resp.status_code == 200
+    assert resp.json()["items"] == [record]
+    assert resp.json()["warnings"] == []
 
 
 def test_deep_check_route_success() -> None:
@@ -123,6 +153,34 @@ def test_deep_check_route_success() -> None:
     assert data["power_state"] == "running"
     assert data["is_hibernated"] is False
     assert data["accelerated_networking_enabled"] is True
+
+
+def test_deep_check_route_validates_required_parameters() -> None:
+    resp = client.get("/vm-deep-check", params={"subscriptionId": "sub1"})
+    assert resp.status_code == 422
+
+
+def test_deep_check_route_surfaces_partial_nic_failures() -> None:
+    from az_scout_vm_sku_modernization.routes import _fetch_vm_deep_check
+
+    vm_response = {
+        "properties": {
+            "instanceView": {"statuses": [{"code": "PowerState/running"}]},
+            "networkProfile": {"networkInterfaces": [{"id": "/subscriptions/sub1/nics/nic1"}]},
+        }
+    }
+    with (
+        patch(
+            "az_scout_vm_sku_modernization.routes.azure_api.arm_get",
+            side_effect=[
+                vm_response,
+                RuntimeError("NIC unavailable"),
+            ],
+        ),
+    ):
+        result = _fetch_vm_deep_check("sub1", "rg1", "vm1", None)
+    assert result["accelerated_networking_enabled"] is None
+    assert result["warnings"]
 
 
 # ============================================================================

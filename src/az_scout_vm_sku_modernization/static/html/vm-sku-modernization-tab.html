@@ -20,10 +20,10 @@
             <div class="input-group input-group-sm mb-1">
                 <input type="search" class="form-control" id="vmm-sub-filter"
                        placeholder="Type a subscription name..." autocomplete="off" spellcheck="false">
-                <button type="button" class="btn btn-outline-secondary" onclick="vmmSelectAllVisible()" title="Select all visible">
+                <button type="button" class="btn btn-outline-secondary" onclick="vmmSelectAllVisible()" title="Select all visible" aria-label="Select all visible subscriptions">
                     <i class="bi bi-check-all"></i>
                 </button>
-                <button type="button" class="btn btn-outline-secondary" onclick="vmmDeselectAll()" title="Clear all">
+                <button type="button" class="btn btn-outline-secondary" onclick="vmmDeselectAll()" title="Clear all" aria-label="Clear subscription selection">
                     <i class="bi bi-x-lg"></i>
                 </button>
             </div>
@@ -38,7 +38,7 @@
 
             <!-- Column filters -->
             <hr class="my-3">
-            <label class="form-label form-label-sm mb-1">
+            <label class="form-label form-label-sm mb-1" for="vmm-sub-list">
                 <i class="bi bi-funnel"></i> Filters
             </label>
             <div class="mb-2">
@@ -136,11 +136,12 @@
                                     <th onclick="vmmSort('image_publisher')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('image_publisher');}" class="sortable" tabindex="0">Image Publisher <i class="bi bi-arrow-down-up sort-icon"></i></th>
                                     <th onclick="vmmSort('disk_controller_type')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('disk_controller_type');}" class="sortable" tabindex="0">Disk Controller <i class="bi bi-arrow-down-up sort-icon"></i></th>
                                     <th>Zones</th>
-                                    <th>
+                                    <th scope="col">
                                         Migration Effort (inferred)
                                         <i
                                             class="bi bi-info-circle ms-1 text-body-secondary"
-                                            title="Low: Gen2 profile with fewer modernization blockers. Moderate: one or two modernization blockers detected. High: Gen1 or multiple blockers detected (for example disk/controller and publisher constraints)."
+                                            role="img" aria-label="Migration effort is calculated by the server; the badge text and tooltip explain the level."
+                                            title="Low: Gen2 profile with fewer modernization blockers. Moderate: one or two modernization blockers detected. High: Gen1 or multiple modernization blockers detected (for example disk/controller and publisher constraints)."
                                         ></i>
                                     </th>
                                 </tr>

@@ -37,10 +37,10 @@ def calculate_migration_effort(vm: dict[str, Any]) -> dict[str, Any]:
         - factors: list of human-readable blocker descriptions
         - tooltip: formatted tooltip explaining the assessment
     """
-    generation = str(vm.get("generation", "Unknown"))
-    disk_controller = str(vm.get("disk_controller_type", "SCSI"))
-    security_type = str(vm.get("security_type", "Standard"))
-    publisher = str(vm.get("image_publisher", "Unknown"))
+    generation = str(vm.get("generation") or "Unknown")
+    disk_controller = str(vm.get("disk_controller_type") or "SCSI")
+    security_type = str(vm.get("security_type") or "Standard")
+    publisher = str(vm.get("image_publisher") or "Unknown")
     hibernation_enabled = bool(vm.get("hibernation_enabled", False))
 
     score = 0
@@ -70,7 +70,10 @@ def calculate_migration_effort(vm: dict[str, Any]) -> dict[str, Any]:
     else:
         factors.append("Trusted Launch enabled")
 
-    # Publisher: first-party (Microsoft) publishers are simpler
+    # Conservative policy: only publishers explicitly beginning with Microsoft
+    # are treated as first-party. Canonical and all other publishers are
+    # third-party for scoring purposes; the image publisher field is not an
+    # attestation of Azure support.
     if _is_third_party_publisher(publisher):
         score += 1
         factors.append("Third-party/custom publisher may require vendor validation")
@@ -104,6 +107,6 @@ def calculate_migration_effort(vm: dict[str, Any]) -> dict[str, Any]:
 def _is_third_party_publisher(publisher: str) -> bool:
     """Detect if a VM publisher is third-party vs. first-party Microsoft.
 
-    First-party publishers typically start with "Microsoft".
+    Only an explicit Microsoft prefix is considered first-party.
     """
     return not publisher.lower().startswith("microsoft")

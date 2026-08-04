@@ -68,6 +68,7 @@ let vmmSortField = "name";
 let vmmSortAsc = true;
 let vmmDetailModal = null;
 const vmmSkuRecommendationCache = new Map();
+const vmmDetailRecommendationCache = new Map();
 const vmmDeepCheckState = new Map(); // key: `sub|rg|name` → result object | "pending" | "error"
 let vmmCurrentDetailVm = null;
 let vmmCurrentDetailTargetSkus = [];
@@ -75,16 +76,6 @@ let vmmDetailStatusFilter = "all";
 let vmmDetailActiveTab = "overview";
 let vmmModernizationTarget = "v6v7";
 const vmmComponents = window.azScout?.components || {};
-
-const vmmKnownMarketplacePublishers = new Set([
-    "canonical",
-    "microsoftwindowsserver",
-    "microsoft-aks",
-    "redhat",
-    "suse",
-    "debian",
-    "oracle",
-]);
 
 function vmmCreateAction(text, options = {}) {
     return { text, ...options };
@@ -190,6 +181,7 @@ function vmmResetLoadedInventory() {
     vmmCurrentDetailVm = null;
     vmmCurrentDetailTargetSkus = [];
     vmmSkuRecommendationCache.clear();
+    vmmDetailRecommendationCache.clear();
     vmmDeepCheckState.clear();
     vmmUpdateActionButtons();
     vmmDetailStatusFilter = "all";
@@ -1492,11 +1484,12 @@ async function vmmRunFullCheck() {
             await vmmOpenVmDetail(vm);
         } else {
             vmmDeepCheckState.set(key, "error");
-            if (labelEl) labelEl.textContent = "(error)";
+            if (labelEl) labelEl.textContent = `(error${data?.error ? `: ${data.error}` : ""})`;
+            if (labelEl) labelEl.setAttribute("title", "The advanced check did not complete.");
         }
-    } catch {
+    } catch (err) {
         vmmDeepCheckState.set(key, "error");
-        if (labelEl) labelEl.textContent = "(error)";
+        if (labelEl) labelEl.textContent = `(error: ${String(err)})`;
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -1516,6 +1509,7 @@ async function vmmLoad() {
     // Reset deep-check state when a new load is triggered
     vmmDeepCheckState.clear();
     vmmSkuRecommendationCache.clear();
+    vmmDetailRecommendationCache.clear();
 
     const subIds = [...vmmSelectedSubs].join(",");
     const url = `/plugins/vm-sku-modernization/vms?subscriptions=${encodeURIComponent(subIds)}`
@@ -1528,7 +1522,14 @@ async function vmmLoad() {
             document.getElementById("vmm-error").textContent = data.error;
             return;
         }
-        vmmAllVms = data;
+        vmmAllVms = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+        if (Array.isArray(data?.warnings) && data.warnings.length) {
+            const errorEl = document.getElementById("vmm-error");
+            if (errorEl) {
+                errorEl.textContent = `Some ARM checks were incomplete: ${data.warnings.join(" ")}`;
+                errorEl.classList.remove("d-none");
+            }
+        }
         vmmPopulateFilterDropdowns();
         vmmApplyFilters();
     } catch (err) {
@@ -1556,10 +1557,10 @@ function vmmApplyFilters() {
     const gen = document.getElementById("vmm-filter-gen")?.value || "";
 
     vmmFilteredVms = vmmAllVms.filter(v => {
-        if (name && !v.name.toLowerCase().includes(name)) return false;
+        if (name && !String(v.name || "").toLowerCase().includes(name)) return false;
         if (region && v.region !== region) return false;
         if (os && v.os_type !== os) return false;
-        if (gen && !v.generation.startsWith(gen)) return false;
+        if (gen && !String(v.generation || "").startsWith(gen)) return false;
         return true;
     });
 
@@ -1617,71 +1618,19 @@ function vmmIsDSuffixedSku(sku) {
 function vmmHasThirdPartyPublisher(publisher) {
     const normalized = String(publisher || "").trim().toLowerCase();
     if (!normalized) return true;
-    return !vmmKnownMarketplacePublishers.has(normalized);
+    return !normalized.startsWith("microsoft");
 }
 
 function vmmGetReadinessAssessment(vm) {
-    const generation = String(vm?.generation || "");
-    const diskController = String(vm?.disk_controller_type || "SCSI");
-    const publisher = String(vm?.image_publisher || "");
-    const securityType = String(vm?.security_type || "Standard");
-    const hibernationEnabled = Boolean(vm?.hibernation_enabled);
-    const isThirdPartyPublisher = vmmHasThirdPartyPublisher(publisher);
-
-    let score = 0;
-    const factors = [];
-
-    if (generation.startsWith("V1")) {
-        score += 2;
-        factors.push("Generation 1 profile inferred/detected");
-    } else if (generation.startsWith("V2")) {
-        factors.push("Generation 2 profile inferred/detected");
-    } else {
-        score += 1;
-        factors.push("Hyper-V generation is unknown");
+    const effort = vm?.migration_effort;
+    if (effort && typeof effort === "object") {
+        return {
+            level: String(effort.level || "Unknown"),
+            badgeClass: String(effort.badge_class || "bg-secondary"),
+            tooltip: String(effort.tooltip || "Migration effort was not fully assessed."),
+        };
     }
-
-    if (diskController.toUpperCase() !== "NVME") {
-        score += 1;
-        factors.push("Disk controller not reported as NVMe");
-    } else {
-        factors.push("Disk controller reported as NVMe");
-    }
-
-    if (securityType !== "TrustedLaunch" && securityType !== "ConfidentialVM") {
-        score += 1;
-        factors.push("Trusted Launch not yet enabled");
-    } else {
-        factors.push("Trusted Launch enabled");
-    }
-
-    if (isThirdPartyPublisher) {
-        score += 1;
-        factors.push("Third-party/custom publisher may require vendor validation");
-    } else {
-        factors.push("Known first-party marketplace publisher");
-    }
-
-    if (hibernationEnabled) {
-        score += 1;
-        factors.push("Hibernation is enabled — resume step required before migration");
-    }
-
-    let level = "Low";
-    let badgeClass = "bg-success";
-    if (score >= 4) {
-        level = "High";
-        badgeClass = "bg-danger";
-    } else if (score >= 2) {
-        level = "Moderate";
-        badgeClass = "bg-warning text-dark";
-    }
-
-    return {
-        level,
-        badgeClass,
-        tooltip: `${level} migration effort. Basis: ${factors.join("; ")}.`,
-    };
+    return { level: "Unknown", badgeClass: "bg-secondary", tooltip: "Migration effort unavailable." };
 }
 
 function vmmBuildRecommendations(vm) {
@@ -2002,7 +1951,8 @@ function vmmRecommendationIcon(title) {
 }
 
 function vmmBuildRecommendationModel(vm) {
-    const recs = vmmBuildRecommendations(vm);
+    const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.resource_group}|${vm.name}`;
+    const recs = vmmDetailRecommendationCache.get(cacheKey) || vmmBuildRecommendations(vm);
     const statusCount = { pass: 0, fail: 0, script: 0, manual: 0 };
     const toneClasses = ["vmm-tone-blue", "vmm-tone-green", "vmm-tone-purple", "vmm-tone-orange"];
 
@@ -2188,49 +2138,53 @@ function vmmBuildOverviewSectionHtml(vm) {
     const model = vmmBuildRecommendationModel(vm);
     const pilotStatusClass = model.readyForPilot ? "text-bg-success" : "text-bg-warning text-dark";
     const pilotStatusLabel = model.readyForPilot ? "Ready for pilot" : "Not ready for pilot";
+    const overviewCards = [
+        {
+            label: "Blockers",
+            value: model.statusCount.fail,
+            valueClass: "text-warning-emphasis",
+            icon: "bi-exclamation-triangle",
+            description: "Actions that already show a remediation gap.",
+        },
+        {
+            label: "Scriptable checks",
+            value: model.statusCount.script,
+            valueClass: "text-info-emphasis",
+            icon: "bi-terminal",
+            description: "Checks that can be advanced with a script or Advanced check.",
+        },
+        {
+            label: "Human validations",
+            value: model.statusCount.manual,
+            valueClass: "text-body-emphasis",
+            icon: "bi-person-check",
+            description: "Items requiring operator or workload-owner review.",
+        },
+    ];
 
     return `
         <div class="vmm-wave-summary-grid">
-            <article class="vmm-wave-card">
-                <div class="vmm-wave-card-label">Blockers</div>
-                <div class="vmm-wave-card-value text-warning-emphasis">${model.statusCount.fail}</div>
-                <div class="small text-body-secondary">Actions already showing a remediation gap.</div>
-            </article>
-            <article class="vmm-wave-card">
-                <div class="vmm-wave-card-label">Remaining scriptable checks</div>
-                <div class="vmm-wave-card-value text-info-emphasis">${model.statusCount.script}</div>
-                <div class="small text-body-secondary">Can be advanced with a helper script or Advanced check.</div>
-            </article>
-            <article class="vmm-wave-card">
-                <div class="vmm-wave-card-label">Remaining human validations</div>
-                <div class="vmm-wave-card-value text-body-emphasis">${model.statusCount.manual}</div>
-                <div class="small text-body-secondary">Need operator or workload-owner review.</div>
-            </article>
+            ${overviewCards.map((card) => `
+                <article class="vmm-wave-card">
+                    <div class="vmm-wave-card-label">
+                        <i class="bi ${card.icon} me-1" aria-hidden="true"></i>${card.label}
+                        <span
+                            class="vmm-overview-info"
+                            tabindex="0"
+                            role="img"
+                            aria-label="Information about ${card.label}"
+                            title="${escapeHtml(card.description)}"
+                        ><i class="bi bi-info-circle" aria-hidden="true"></i></span>
+                    </div>
+                    <div class="vmm-wave-card-value ${card.valueClass}">${card.value}</div>
+                    <div class="small text-body-secondary">Open the Details tab for actions</div>
+                </article>
+            `).join("")}
             <article class="vmm-wave-card">
                 <div class="vmm-wave-card-label">Pilot status</div>
                 <div class="mt-1"><span class="badge ${pilotStatusClass}">${pilotStatusLabel}</span></div>
                 <div class="small text-body-secondary mt-2">Pilot-ready means no blockers and no remaining validation items.</div>
             </article>
-        </div>
-        <div class="row g-3 mt-1">
-            <div class="col-lg-4">
-                <section class="vmm-wave-detail-card">
-                    <h6><i class="bi bi-exclamation-triangle me-1"></i>Blockers</h6>
-                    ${vmmBuildSummaryList(model.blockers, "No blockers currently detected.")}
-                </section>
-            </div>
-            <div class="col-lg-4">
-                <section class="vmm-wave-detail-card">
-                    <h6><i class="bi bi-terminal me-1"></i>Remaining scriptable checks</h6>
-                    ${vmmBuildSummaryList(model.scriptableChecks, "No remaining scriptable checks.")}
-                </section>
-            </div>
-            <div class="col-lg-4">
-                <section class="vmm-wave-detail-card">
-                    <h6><i class="bi bi-person-check me-1"></i>Remaining human validations</h6>
-                    ${vmmBuildSummaryList(model.humanValidations, "No remaining human validations.")}
-                </section>
-            </div>
         </div>
     `;
 }
@@ -2295,10 +2249,10 @@ function vmmBuildCandidateTargetSkus(currentSku) {
 
 function vmmGetConfidenceDisplay(confidence) {
     if (vmmComponents.renderConfidenceBadge) {
-        return vmmComponents.renderConfidenceBadge(confidence, { tooltip: false });
+        return vmmComponents.renderConfidenceBadge(confidence, { tooltip: true });
     }
     if (!confidence || typeof confidence.score !== "number") {
-        return '<span class="badge bg-secondary">Unknown</span>';
+        return '<span class="badge bg-secondary" title="Basic Deployment Confidence is unavailable.">Unknown</span>';
     }
     const score = Math.round(confidence.score);
     const label = String(confidence.label || "Unknown");
@@ -2307,7 +2261,20 @@ function vmmGetConfidenceDisplay(confidence) {
     else if (score >= 60) cls = "bg-primary";
     else if (score >= 40) cls = "bg-warning text-dark";
     else cls = "bg-danger";
-    return `<span class="badge ${cls}">${escapeHtml(label)} (${score})</span>`;
+    return `<span class="badge ${cls}" title="Basic Deployment Confidence: ${escapeHtml(label)} (${score}/100).">${escapeHtml(label)} (${score})</span>`;
+}
+
+function vmmBuildConfidenceInfo() {
+    const explanation = "Basic Deployment Confidence is an indicative score for the suggested target SKU. It combines the SKU match, availability, restrictions, and detected capabilities; it is not a deployment guarantee.";
+    return `
+        <span
+            class="vmm-confidence-info ms-1"
+            tabindex="0"
+            role="img"
+            aria-label="Information about Basic Deployment Confidence"
+            title="${escapeHtml(explanation)}"
+        ><i class="bi bi-info-circle" aria-hidden="true"></i></span>
+    `;
 }
 
 function vmmGetZonesDisplay(sku) {
@@ -2421,14 +2388,19 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
         capabilities: primarySku.capabilities || {},
     };
 
-    const sharedConfidenceSection = primarySku.confidence && vmmComponents.renderConfidenceBreakdown
-        ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
-        : `
-            <div class="vmm-target-block mb-3">
-                <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence</h6>
-                <div class="small">${primaryConfidence}</div>
-            </div>
-        `;
+    const sharedConfidenceSection = `
+        <div class="vmm-confidence-wrapper">
+            ${vmmBuildConfidenceInfo()}
+            ${primarySku.confidence && vmmComponents.renderConfidenceBreakdown
+                ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
+                : `
+                    <div class="vmm-target-block mb-3">
+                        <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence</h6>
+                        <div class="small">${primaryConfidence}</div>
+                    </div>
+                `}
+        </div>
+    `;
 
     const sharedZoneSection = vmmComponents.renderZoneAvailability
         ? vmmComponents.renderZoneAvailability(primaryProfile, primarySku.confidence, {})
@@ -2521,8 +2493,16 @@ async function vmmOpenVmDetail(vm) {
     modal.show();
 
     try {
+        const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.resource_group}|${vm.name}`;
         const targetSkus = await vmmFetchTargetSkuRecommendations(vm);
         vmmCurrentDetailTargetSkus = targetSkus;
+        const cachedRecommendations = vmmDetailRecommendationCache.get(cacheKey);
+        if (cachedRecommendations) {
+            vmmRenderCurrentDetailContent(cachedRecommendations);
+            return;
+        }
+        const recommendations = vmmBuildRecommendations(vm);
+        vmmDetailRecommendationCache.set(cacheKey, recommendations);
         vmmRenderCurrentDetailContent();
     } catch (err) {
         contentEl.innerHTML = `<div class="text-danger small">Failed to build recommendations: ${escapeHtml(String(err))}</div>`;
@@ -2538,7 +2518,7 @@ async function vmmOpenVmDetail(vm) {
 // ---------------------------------------------------------------------------
 function vmmEffortBadge(vm) {
     const readiness = vmmGetReadinessAssessment(vm);
-    return `<span class="badge ${readiness.badgeClass}" title="${escapeHtml(readiness.tooltip)}">${escapeHtml(readiness.level)}</span>`;
+    return `<span class="badge ${readiness.badgeClass}" role="status" aria-label="Migration effort: ${escapeHtml(readiness.level)}" title="${escapeHtml(readiness.tooltip)}">${escapeHtml(readiness.level)}</span>`;
 }
 
 function vmmDiskBadge(controller) {
@@ -2570,14 +2550,14 @@ function vmmRenderTable() {
     tbody.innerHTML = sorted.map((v, i) => `<tr class="vmm-vm-row" tabindex="0"
         onclick="vmmOpenVmDetailByIndex(${i})"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmOpenVmDetailByIndex(${i});}">
-        <td class="text-nowrap">${escapeHtml(v.name)}</td>
-        <td class="text-nowrap small">${escapeHtml(v.resource_group)}</td>
-        <td class="text-nowrap small">${escapeHtml(v.subscription_name)}</td>
-        <td class="text-nowrap">${escapeHtml(v.region)}</td>
-        <td class="text-nowrap"><code>${escapeHtml(v.sku)}</code></td>
-        <td class="text-nowrap">${escapeHtml(v.generation)}</td>
-        <td>${escapeHtml(v.os_type)}</td>
-        <td class="small">${escapeHtml(v.image_publisher)}</td>
+        <td class="text-nowrap">${escapeHtml(v.name || "Unknown")}</td>
+        <td class="text-nowrap small">${escapeHtml(v.resource_group || "Unknown")}</td>
+        <td class="text-nowrap small">${escapeHtml(v.subscription_name || "Unknown")}</td>
+        <td class="text-nowrap">${escapeHtml(v.region || "Unknown")}</td>
+        <td class="text-nowrap"><code>${escapeHtml(v.sku || "Unknown")}</code></td>
+        <td class="text-nowrap">${escapeHtml(v.generation || "Unknown")}</td>
+        <td>${escapeHtml(v.os_type || "Unknown")}</td>
+        <td class="small">${escapeHtml(v.image_publisher || "Unknown")}</td>
         <td>${vmmDiskBadge(v.disk_controller_type)}</td>
         <td>${vmmZonesBadge(v.zones)}</td>
         <td>${vmmEffortBadge(v)}</td>
@@ -2591,7 +2571,8 @@ function vmmRenderStats(vms) {
     if (!statsEl) return;
 
     const byGen = vms.reduce((acc, v) => {
-        const k = v.generation.startsWith("V1") ? "V1" : v.generation.startsWith("V2") ? "V2" : "Unknown";
+        const generation = String(v.generation || "");
+        const k = generation.startsWith("V1") ? "V1" : generation.startsWith("V2") ? "V2" : "Unknown";
         acc[k] = (acc[k] || 0) + 1;
         return acc;
     }, {});
@@ -2784,9 +2765,13 @@ function vmmExportCSV() {
         (v.zones || []).join(";"),
         vmmGetReadinessAssessment(v).level,
     ]);
-    downloadCSV(
-        [headers, ...rows],
+    const csv = [headers, ...rows]
+        .map(row => row.map(value => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+        .join("\r\n");
+    vmmDownloadTextFile(
+        `\ufeff${csv}\r\n`,
         `vm-sku-modernization-${vmmSanitizeFilePart(vmmGetModernizationTargetLabel())}.csv`,
+        "text/csv;charset=utf-8",
     );
 }
 

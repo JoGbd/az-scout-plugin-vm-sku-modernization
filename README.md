@@ -71,6 +71,11 @@ The dashboard includes:
   - quota and capacity planning
 - a **checklist export** for the currently selected VM
 
+Migration-effort scoring is calculated by the backend and included in each VM
+record. Publisher classification is intentionally conservative: only publishers
+whose name begins with `Microsoft` are treated as first-party; Canonical and all
+other publishers remain third-party for planning purposes.
+
 ## Quality checks
 
 ```bash
