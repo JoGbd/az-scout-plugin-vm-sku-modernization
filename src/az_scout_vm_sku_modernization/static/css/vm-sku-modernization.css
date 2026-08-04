@@ -617,6 +617,28 @@
     margin: 0.3rem 0 0.35rem;
 }
 
+.vmm-overview-info {
+    cursor: help;
+    color: var(--bs-secondary-color);
+    margin-left: 0.2rem;
+}
+
+.vmm-overview-info:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 2px;
+    border-radius: 50%;
+}
+
+.vmm-overview-details > summary {
+    list-style: none;
+    display: inline-block;
+    cursor: pointer;
+}
+
+.vmm-overview-details > summary::-webkit-details-marker {
+    display: none;
+}
+
 .vmm-wave-detail-card h6 {
     margin-bottom: 0.65rem;
 }

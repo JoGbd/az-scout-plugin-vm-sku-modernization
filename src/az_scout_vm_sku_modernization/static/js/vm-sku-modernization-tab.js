@@ -2138,50 +2138,75 @@ function vmmBuildOverviewSectionHtml(vm) {
     const model = vmmBuildRecommendationModel(vm);
     const pilotStatusClass = model.readyForPilot ? "text-bg-success" : "text-bg-warning text-dark";
     const pilotStatusLabel = model.readyForPilot ? "Ready for pilot" : "Not ready for pilot";
+    const overviewCards = [
+        {
+            label: "Blockers",
+            value: model.statusCount.fail,
+            valueClass: "text-warning-emphasis",
+            icon: "bi-exclamation-triangle",
+            description: "Actions that already show a remediation gap.",
+            items: model.blockers,
+            emptyLabel: "No blockers currently detected.",
+        },
+        {
+            label: "Scriptable checks",
+            value: model.statusCount.script,
+            valueClass: "text-info-emphasis",
+            icon: "bi-terminal",
+            description: "Checks that can be advanced with a script or Advanced check.",
+            items: model.scriptableChecks,
+            emptyLabel: "No remaining scriptable checks.",
+        },
+        {
+            label: "Human validations",
+            value: model.statusCount.manual,
+            valueClass: "text-body-emphasis",
+            icon: "bi-person-check",
+            description: "Items requiring operator or workload-owner review.",
+            items: model.humanValidations,
+            emptyLabel: "No remaining human validations.",
+        },
+    ];
 
     return `
         <div class="vmm-wave-summary-grid">
-            <article class="vmm-wave-card">
-                <div class="vmm-wave-card-label">Blockers</div>
-                <div class="vmm-wave-card-value text-warning-emphasis">${model.statusCount.fail}</div>
-                <div class="small text-body-secondary">Actions already showing a remediation gap.</div>
-            </article>
-            <article class="vmm-wave-card">
-                <div class="vmm-wave-card-label">Remaining scriptable checks</div>
-                <div class="vmm-wave-card-value text-info-emphasis">${model.statusCount.script}</div>
-                <div class="small text-body-secondary">Can be advanced with a helper script or Advanced check.</div>
-            </article>
-            <article class="vmm-wave-card">
-                <div class="vmm-wave-card-label">Remaining human validations</div>
-                <div class="vmm-wave-card-value text-body-emphasis">${model.statusCount.manual}</div>
-                <div class="small text-body-secondary">Need operator or workload-owner review.</div>
-            </article>
+            ${overviewCards.map((card) => `
+                <article class="vmm-wave-card">
+                    <div class="vmm-wave-card-label">
+                        <i class="bi ${card.icon} me-1" aria-hidden="true"></i>${card.label}
+                        <span
+                            class="vmm-overview-info"
+                            tabindex="0"
+                            role="img"
+                            aria-label="Information about ${card.label}"
+                            title="${escapeHtml(card.description)}"
+                        ><i class="bi bi-info-circle" aria-hidden="true"></i></span>
+                    </div>
+                    <div class="vmm-wave-card-value ${card.valueClass}">${card.value}</div>
+                    <div class="small text-body-secondary">See details below</div>
+                </article>
+            `).join("")}
             <article class="vmm-wave-card">
                 <div class="vmm-wave-card-label">Pilot status</div>
                 <div class="mt-1"><span class="badge ${pilotStatusClass}">${pilotStatusLabel}</span></div>
                 <div class="small text-body-secondary mt-2">Pilot-ready means no blockers and no remaining validation items.</div>
             </article>
         </div>
-        <div class="row g-3 mt-1">
-            <div class="col-lg-4">
-                <section class="vmm-wave-detail-card">
-                    <h6><i class="bi bi-exclamation-triangle me-1"></i>Blockers</h6>
-                    ${vmmBuildSummaryList(model.blockers, "No blockers currently detected.")}
-                </section>
+        <details class="vmm-overview-details mt-3">
+            <summary class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-list-check me-1" aria-hidden="true"></i>Afficher les détails
+            </summary>
+            <div class="row g-3 mt-1">
+                ${overviewCards.map((card) => `
+                    <div class="col-lg-4">
+                        <section class="vmm-wave-detail-card">
+                            <h6><i class="bi ${card.icon} me-1" aria-hidden="true"></i>${card.label}</h6>
+                            ${vmmBuildSummaryList(card.items, card.emptyLabel)}
+                        </section>
+                    </div>
+                `).join("")}
             </div>
-            <div class="col-lg-4">
-                <section class="vmm-wave-detail-card">
-                    <h6><i class="bi bi-terminal me-1"></i>Remaining scriptable checks</h6>
-                    ${vmmBuildSummaryList(model.scriptableChecks, "No remaining scriptable checks.")}
-                </section>
-            </div>
-            <div class="col-lg-4">
-                <section class="vmm-wave-detail-card">
-                    <h6><i class="bi bi-person-check me-1"></i>Remaining human validations</h6>
-                    ${vmmBuildSummaryList(model.humanValidations, "No remaining human validations.")}
-                </section>
-            </div>
-        </div>
+        </details>
     `;
 }
 
