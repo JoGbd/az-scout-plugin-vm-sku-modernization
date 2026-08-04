@@ -2264,6 +2264,19 @@ function vmmGetConfidenceDisplay(confidence) {
     return `<span class="badge ${cls}" title="Basic Deployment Confidence: ${escapeHtml(label)} (${score}/100).">${escapeHtml(label)} (${score})</span>`;
 }
 
+function vmmBuildConfidenceInfo() {
+    const explanation = "Basic Deployment Confidence is an indicative score for the suggested target SKU. It combines the SKU match, availability, restrictions, and detected capabilities; it is not a deployment guarantee.";
+    return `
+        <span
+            class="vmm-confidence-info ms-1"
+            tabindex="0"
+            role="img"
+            aria-label="Information about Basic Deployment Confidence"
+            title="${escapeHtml(explanation)}"
+        ><i class="bi bi-info-circle" aria-hidden="true"></i></span>
+    `;
+}
+
 function vmmGetZonesDisplay(sku) {
     const zones = Array.isArray(sku?.zones) ? sku.zones : [];
     const restrictions = Array.isArray(sku?.restrictions)
@@ -2375,14 +2388,19 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
         capabilities: primarySku.capabilities || {},
     };
 
-    const sharedConfidenceSection = primarySku.confidence && vmmComponents.renderConfidenceBreakdown
-        ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
-        : `
-            <div class="vmm-target-block mb-3">
-                <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence</h6>
-                <div class="small">${primaryConfidence}</div>
-            </div>
-        `;
+    const sharedConfidenceSection = `
+        <div class="vmm-confidence-wrapper">
+            ${vmmBuildConfidenceInfo()}
+            ${primarySku.confidence && vmmComponents.renderConfidenceBreakdown
+                ? vmmComponents.renderConfidenceBreakdown(primarySku.confidence)
+                : `
+                    <div class="vmm-target-block mb-3">
+                        <h6><i class="bi bi-graph-up-arrow me-1"></i>Confidence</h6>
+                        <div class="small">${primaryConfidence}</div>
+                    </div>
+                `}
+        </div>
+    `;
 
     const sharedZoneSection = vmmComponents.renderZoneAvailability
         ? vmmComponents.renderZoneAvailability(primaryProfile, primarySku.confidence, {})
