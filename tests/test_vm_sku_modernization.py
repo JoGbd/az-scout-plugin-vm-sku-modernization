@@ -4,7 +4,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from az_scout_vm_sku_modernization import plugin
-from az_scout_vm_sku_modernization.routes import _is_migration_candidate, router
+from az_scout_vm_sku_modernization.routes import (
+    _fetch_vm_deep_check,
+    _fetch_vms_for_subscription,
+    _is_migration_candidate,
+    router,
+)
 
 _app = FastAPI()
 _app.include_router(router)
@@ -86,6 +91,21 @@ def test_deep_check_route_auth_error() -> None:
     assert "error" in resp.json()
 
 
+def test_deep_check_route_arm_request_error() -> None:
+    from az_scout.azure_api import ArmRequestError
+
+    with patch(
+        "az_scout_vm_sku_modernization.routes._fetch_vm_deep_check",
+        side_effect=ArmRequestError("ARM unavailable", status_code=503),
+    ):
+        resp = client.get(
+            "/vm-deep-check",
+            params={"subscriptionId": "sub1", "resourceGroup": "rg1", "vmName": "vm1"},
+        )
+    assert resp.status_code == 502
+    assert "ARM unavailable" in resp.json()["error"]
+
+
 def test_vms_route_passes_selected_modernization_target() -> None:
     with (
         patch(
@@ -133,6 +153,93 @@ def test_vms_route_returns_items_and_warnings() -> None:
     assert resp.json()["warnings"] == []
 
 
+def test_vms_route_keeps_partial_results_when_one_subscription_fails() -> None:
+    def fetch_vms(
+        sub_id: str,
+        _sub_name: str,
+        _tenant_id: str | None,
+        _target: str,
+        warnings: list[str],
+    ) -> list[dict[str, object]]:
+        if sub_id == "denied":
+            warnings.append("Could not read subscription denied: authorization denied")
+            return []
+        return [{"name": "vm1", "subscription_id": sub_id}]
+
+    with (
+        patch(
+            "az_scout_vm_sku_modernization.routes.azure_api.list_subscriptions",
+            return_value=[
+                {"id": "ok", "name": "Readable"},
+                {"id": "denied", "name": "Denied"},
+            ],
+        ),
+        patch(
+            "az_scout_vm_sku_modernization.routes._fetch_vms_for_subscription",
+            side_effect=fetch_vms,
+        ),
+    ):
+        resp = client.get("/vms", params={"subscriptions": "ok,denied"})
+
+    assert resp.status_code == 200
+    assert resp.json()["items"] == [{"name": "vm1", "subscription_id": "ok"}]
+    assert "authorization denied" in resp.json()["warnings"][0]
+
+
+def test_vms_route_handles_subscription_discovery_arm_error() -> None:
+    from az_scout.azure_api import ArmRequestError
+
+    with (
+        patch(
+            "az_scout_vm_sku_modernization.routes.azure_api.list_subscriptions",
+            side_effect=ArmRequestError("discovery unavailable"),
+        ),
+        patch(
+            "az_scout_vm_sku_modernization.routes._fetch_vms_for_subscription",
+            return_value=[],
+        ) as fetch_vms,
+    ):
+        resp = client.get("/vms", params={"subscriptions": "sub1"})
+
+    assert resp.status_code == 200
+    assert "discovery unavailable" in resp.json()["warnings"][0]
+    fetch_vms.assert_called_once_with("sub1", "sub1", None, "v6v7", resp.json()["warnings"])
+
+
+def test_subscription_fetch_turns_arm_errors_into_warnings() -> None:
+    from az_scout.azure_api import ArmAuthorizationError, ArmRequestError
+
+    for error in (
+        ArmAuthorizationError("denied"),
+        ArmRequestError("throttled", status_code=429),
+    ):
+        warnings: list[str] = []
+        with patch(
+            "az_scout_vm_sku_modernization.routes.azure_api.arm_paginate",
+            side_effect=error,
+        ):
+            result = _fetch_vms_for_subscription("sub1", "Sub", None, "v6v7", warnings)
+        assert result == []
+        assert warnings
+
+
+def test_subscription_fetch_skips_malformed_partial_records() -> None:
+    warnings: list[str] = []
+    valid_vm = {
+        "name": "vm1",
+        "location": "eastus",
+        "properties": {"hardwareProfile": {"vmSize": "Standard_D2s_v3"}},
+    }
+    with patch(
+        "az_scout_vm_sku_modernization.routes.azure_api.arm_paginate",
+        return_value=[None, {"name": "bad", "properties": "invalid"}, valid_vm],
+    ):
+        result = _fetch_vms_for_subscription("sub1", "Sub", None, "v6v7", warnings)
+
+    assert [item["name"] for item in result] == ["vm1"]
+    assert len(warnings) == 2
+
+
 def test_deep_check_route_success() -> None:
     fake_result = {
         "power_state": "running",
@@ -161,8 +268,6 @@ def test_deep_check_route_validates_required_parameters() -> None:
 
 
 def test_deep_check_route_surfaces_partial_nic_failures() -> None:
-    from az_scout_vm_sku_modernization.routes import _fetch_vm_deep_check
-
     vm_response = {
         "properties": {
             "instanceView": {"statuses": [{"code": "PowerState/running"}]},
@@ -181,6 +286,30 @@ def test_deep_check_route_surfaces_partial_nic_failures() -> None:
         result = _fetch_vm_deep_check("sub1", "rg1", "vm1", None)
     assert result["accelerated_networking_enabled"] is None
     assert result["warnings"]
+
+
+def test_deep_check_missing_fields_returns_explicit_unknowns() -> None:
+    with patch(
+        "az_scout_vm_sku_modernization.routes.azure_api.arm_get",
+        return_value={},
+    ):
+        result = _fetch_vm_deep_check("sub1", "rg1", "vm1", None)
+
+    assert result["power_state"] == "unknown"
+    assert result["is_hibernated"] is False
+    assert result["accelerated_networking_enabled"] is None
+    assert result["accelerated_networking_nics_checked"] == 0
+
+
+def test_deep_check_malformed_arm_fields_returns_partial_warning() -> None:
+    with patch(
+        "az_scout_vm_sku_modernization.routes.azure_api.arm_get",
+        return_value={"properties": {"instanceView": "invalid", "networkProfile": "invalid"}},
+    ):
+        result = _fetch_vm_deep_check("sub1", "rg1", "vm1", None)
+
+    assert result["power_state"] == "unknown"
+    assert len(result["warnings"]) == 2
 
 
 # ============================================================================

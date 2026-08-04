@@ -126,16 +126,16 @@
                         <table class="table table-sm table-hover vmm-table mb-0" id="vmm-table">
                             <thead class="table-dark">
                                 <tr>
-                                    <th onclick="vmmSort('name')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('name');}" class="sortable" tabindex="0">VM Name <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('resource_group')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('resource_group');}" class="sortable" tabindex="0">Resource Group <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('subscription_name')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('subscription_name');}" class="sortable" tabindex="0">Subscription <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('region')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('region');}" class="sortable" tabindex="0">Region <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('sku')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('sku');}" class="sortable" tabindex="0">SKU <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('generation')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('generation');}" class="sortable" tabindex="0">Hyper-V Generation <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('os_type')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('os_type');}" class="sortable" tabindex="0">OS <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('image_publisher')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('image_publisher');}" class="sortable" tabindex="0">Image Publisher <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th onclick="vmmSort('disk_controller_type')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('disk_controller_type');}" class="sortable" tabindex="0">Disk Controller <i class="bi bi-arrow-down-up sort-icon"></i></th>
-                                    <th>Zones</th>
+                                    <th scope="col" aria-sort="ascending" data-sort-field="name" onclick="vmmSort('name')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('name');}" class="sortable" tabindex="0">VM Name <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="resource_group" onclick="vmmSort('resource_group')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('resource_group');}" class="sortable" tabindex="0">Resource Group <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="subscription_name" onclick="vmmSort('subscription_name')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('subscription_name');}" class="sortable" tabindex="0">Subscription <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="region" onclick="vmmSort('region')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('region');}" class="sortable" tabindex="0">Region <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="sku" onclick="vmmSort('sku')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('sku');}" class="sortable" tabindex="0">SKU <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="generation" onclick="vmmSort('generation')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('generation');}" class="sortable" tabindex="0">Hyper-V Generation <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="os_type" onclick="vmmSort('os_type')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('os_type');}" class="sortable" tabindex="0">OS <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="image_publisher" onclick="vmmSort('image_publisher')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('image_publisher');}" class="sortable" tabindex="0">Image Publisher <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col" aria-sort="none" data-sort-field="disk_controller_type" onclick="vmmSort('disk_controller_type')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmSort('disk_controller_type');}" class="sortable" tabindex="0">Disk Controller <i class="bi bi-arrow-down-up sort-icon" aria-hidden="true"></i></th>
+                                    <th scope="col">Zones</th>
                                     <th scope="col">
                                         Migration Effort (inferred)
                                         <i
@@ -156,18 +156,21 @@
 </div>
 
 <!-- VM Detail Modal (VM SKU Modernization plugin specific) -->
-<div class="modal fade" id="vmmDetailModal" tabindex="-1" aria-labelledby="vmmDetailModalLabel" aria-hidden="true">
+<div class="modal fade" id="vmmDetailModal" tabindex="-1" aria-labelledby="vmmDetailModalLabel" aria-describedby="vmmDetailModalDescription" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-fullscreen-md-down modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="vmmDetailModalLabel">
                     VM SKU Modernization Detail - <span id="vmm-detail-name"></span>
                 </h5>
+                <span class="visually-hidden" id="vmmDetailModalDescription">
+                    Planning recommendations and live target SKU availability, quota, and pricing details.
+                </span>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <div id="vmm-detail-loading" class="text-center d-none">
-                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                <div id="vmm-detail-loading" class="text-center d-none" role="status" aria-live="polite">
+                    <div class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></div>
                     <span class="ms-2 small">Building recommendations...</span>
                 </div>
                 <div class="d-flex flex-wrap justify-content-end align-items-center gap-2 mb-2">

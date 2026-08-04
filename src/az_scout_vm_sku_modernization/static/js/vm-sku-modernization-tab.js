@@ -67,17 +67,52 @@ let vmmDisplayedVms = [];    // current table ordering
 let vmmSortField = "name";
 let vmmSortAsc = true;
 let vmmDetailModal = null;
+const vmmCacheTtlMs = 5 * 60 * 1000;
 const vmmSkuRecommendationCache = new Map();
+const vmmSkuRecommendationIssues = new Map();
+const vmmSkuDetailCache = new Map();
 const vmmDetailRecommendationCache = new Map();
 const vmmDeepCheckState = new Map(); // key: `sub|rg|name` → result object | "pending" | "error"
 let vmmCurrentDetailVm = null;
 let vmmCurrentDetailTargetSkus = [];
 let vmmCurrentDetailSkuDetail = null;
 let vmmCurrentDetailCurrency = "USD";
+let vmmCurrentDetailIssues = [];
+let vmmDetailRequestId = 0;
+let vmmCurrencyRequestId = 0;
+let vmmLastDetailTrigger = null;
 let vmmDetailStatusFilter = "all";
 let vmmDetailActiveTab = "overview";
 let vmmModernizationTarget = "v6v7";
 const vmmComponents = window.azScout?.components || {};
+
+function vmmGetCached(cache, key) {
+    const entry = cache.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= Date.now()) {
+        cache.delete(key);
+        return undefined;
+    }
+    return entry.promise || entry.value;
+}
+
+function vmmCachedLoad(cache, key, loader) {
+    const cached = vmmGetCached(cache, key);
+    if (cached !== undefined) return Promise.resolve(cached);
+
+    const promise = Promise.resolve()
+        .then(loader)
+        .then((value) => {
+            cache.set(key, { value, expiresAt: Date.now() + vmmCacheTtlMs });
+            return value;
+        })
+        .catch((error) => {
+            cache.delete(key);
+            throw error;
+        });
+    cache.set(key, { promise, expiresAt: Date.now() + vmmCacheTtlMs });
+    return promise;
+}
 
 function vmmCreateAction(text, options = {}) {
     return { text, ...options };
@@ -184,7 +219,10 @@ function vmmResetLoadedInventory() {
     vmmCurrentDetailTargetSkus = [];
     vmmCurrentDetailSkuDetail = null;
     vmmCurrentDetailCurrency = "USD";
+    vmmCurrentDetailIssues = [];
     vmmSkuRecommendationCache.clear();
+    vmmSkuRecommendationIssues.clear();
+    vmmSkuDetailCache.clear();
     vmmDetailRecommendationCache.clear();
     vmmDeepCheckState.clear();
     vmmUpdateActionButtons();
@@ -210,9 +248,11 @@ function vmmSetModernizationTarget(target) {
 
 function vmmGetSuggestedTargetSku(vm) {
     if (vm?.subscription_id && vm?.region && vm?.sku) {
-        const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.region}|${vm.sku}`;
+        const cacheKey = vmmGetRecommendationCacheKey(vm);
         const cached = vmmSkuRecommendationCache.get(cacheKey);
-        if (Array.isArray(cached) && cached[0]?.name) return String(cached[0].name);
+        if (Array.isArray(cached?.value) && cached.value[0]?.name) {
+            return String(cached.value[0].name);
+        }
     }
     const candidates = vmmBuildCandidateTargetSkus(vm?.sku);
     return candidates[0] || "";
@@ -1456,6 +1496,7 @@ function vmmRenderCurrentDetailContent() {
         vmmCurrentDetailTargetSkus,
         vmmCurrentDetailSkuDetail,
     );
+    contentEl.setAttribute("aria-live", "polite");
     contentEl.classList.remove("d-none");
     if (window.bootstrap?.Tooltip) {
         contentEl.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
@@ -1480,18 +1521,33 @@ async function vmmRefreshCurrentDetailCurrency(currency) {
 
     const contentEl = document.getElementById("vmm-detail-content");
     if (!contentEl) return;
+    const requestId = ++vmmCurrencyRequestId;
+    const requestedCurrency = String(currency).toUpperCase();
+    vmmCurrentDetailCurrency = requestedCurrency;
     contentEl.setAttribute("aria-busy", "true");
     try {
-        vmmCurrentDetailCurrency = currency;
-        vmmCurrentDetailSkuDetail = await vmmFetchTargetSkuDetail(vm, sku.name, currency);
+        const detail = await vmmFetchTargetSkuDetail(vm, sku.name, requestedCurrency);
+        if (
+            requestId !== vmmCurrencyRequestId
+            || vm !== vmmCurrentDetailVm
+            || requestedCurrency !== vmmCurrentDetailCurrency
+        ) return;
+        vmmCurrentDetailSkuDetail = detail;
+        vmmCurrentDetailIssues = vmmCurrentDetailIssues.filter((issue) => issue.kind !== "pricing");
         vmmRenderCurrentDetailContent();
     } catch (err) {
+        if (requestId !== vmmCurrencyRequestId) return;
+        vmmCurrentDetailIssues = vmmCurrentDetailIssues.filter((issue) => issue.kind !== "pricing");
+        vmmCurrentDetailIssues.push({
+            kind: "pricing",
+            message: `Pricing could not be refreshed in ${requestedCurrency}: ${String(err)}`,
+        });
         contentEl.insertAdjacentHTML(
             "afterbegin",
-            `<div class="alert alert-danger py-2 small">Failed to refresh pricing: ${escapeHtml(String(err))}</div>`,
+            `<div class="alert alert-danger py-2 small" role="alert">Failed to refresh pricing: ${escapeHtml(String(err))}</div>`,
         );
     } finally {
-        contentEl.removeAttribute("aria-busy");
+        if (requestId === vmmCurrencyRequestId) contentEl.removeAttribute("aria-busy");
     }
 }
 
@@ -1553,6 +1609,8 @@ async function vmmLoad() {
     // Reset deep-check state when a new load is triggered
     vmmDeepCheckState.clear();
     vmmSkuRecommendationCache.clear();
+    vmmSkuRecommendationIssues.clear();
+    vmmSkuDetailCache.clear();
     vmmDetailRecommendationCache.clear();
 
     const subIds = [...vmmSelectedSubs].join(",");
@@ -1651,7 +1709,17 @@ function vmmOpenVmDetailByIndex(index) {
 function vmmEnsureDetailModal() {
     const modalEl = document.getElementById("vmmDetailModal");
     if (!modalEl || typeof bootstrap === "undefined") return null;
-    if (!vmmDetailModal) vmmDetailModal = new bootstrap.Modal(modalEl);
+    if (!vmmDetailModal) {
+        vmmDetailModal = new bootstrap.Modal(modalEl);
+        modalEl.addEventListener("shown.bs.modal", () => {
+            const closeButton = modalEl.querySelector(".btn-close");
+            (closeButton || modalEl).focus();
+        });
+        modalEl.addEventListener("hidden.bs.modal", () => {
+            if (vmmLastDetailTrigger?.isConnected) vmmLastDetailTrigger.focus();
+            vmmLastDetailTrigger = null;
+        });
+    }
     return vmmDetailModal;
 }
 
@@ -2095,7 +2163,7 @@ function vmmBuildActionStatusMarkup(evaluated) {
             </button>
         `;
     }
-    return `<span class="badge rounded-pill vmm-reco-action-status ${evaluated.badgeClass}">${escapeHtml(evaluated.badgeLabel)}</span>`;
+    return `<span class="badge rounded-pill vmm-reco-action-status ${evaluated.badgeClass}" role="status" aria-label="Recommendation status: ${escapeHtml(evaluated.badgeLabel)}">${escapeHtml(evaluated.badgeLabel)}</span>`;
 }
 
 function vmmBuildRecommendationSectionHtml(vm) {
@@ -2243,8 +2311,19 @@ function vmmBuildDetailContentHtml(vm, targetSkus, targetSkuDetail = null) {
 
     const overviewActive = vmmDetailActiveTab === "overview";
     const detailsActive = vmmDetailActiveTab === "details";
+    const issueSummary = vmmCurrentDetailIssues.length
+        ? `
+            <div class="alert alert-warning py-2 small" role="status" aria-live="polite">
+                <strong>Some live data is incomplete.</strong>
+                <ul class="mb-0 ps-3">
+                    ${vmmCurrentDetailIssues.map((issue) => `<li>${escapeHtml(issue.message)}</li>`).join("")}
+                </ul>
+            </div>
+        `
+        : "";
 
     return `
+        ${issueSummary}
         <div class="vmm-vm-context mb-3">
             <div class="small text-body-secondary mb-1">
                 <strong>${vmName}</strong> · SKU <code>${sku}</code>
@@ -2296,7 +2375,7 @@ function vmmGetConfidenceDisplay(confidence) {
         return vmmComponents.renderConfidenceBadge(confidence, { tooltip: true });
     }
     if (!confidence || typeof confidence.score !== "number") {
-        return '<span class="badge bg-secondary" title="Basic Deployment Confidence is unavailable.">Unknown</span>';
+        return '<span class="badge bg-secondary" role="status" aria-label="Basic Deployment Confidence unavailable" title="Basic Deployment Confidence is unavailable.">Unknown</span>';
     }
     const score = Math.round(confidence.score);
     const label = String(confidence.label || "Unknown");
@@ -2305,7 +2384,7 @@ function vmmGetConfidenceDisplay(confidence) {
     else if (score >= 60) cls = "bg-primary";
     else if (score >= 40) cls = "bg-warning text-dark";
     else cls = "bg-danger";
-    return `<span class="badge ${cls}" title="Basic Deployment Confidence: ${escapeHtml(label)} (${score}/100).">${escapeHtml(label)} (${score})</span>`;
+    return `<span class="badge ${cls}" role="status" aria-label="Basic Deployment Confidence: ${escapeHtml(label)}, ${score} out of 100" title="Basic Deployment Confidence: ${escapeHtml(label)} (${score}/100).">${escapeHtml(label)} (${score})</span>`;
 }
 
 function vmmBuildConfidenceInfo() {
@@ -2429,68 +2508,146 @@ function vmmBuildPricingTable(sku) {
     `;
 }
 
+function vmmGetRecommendationCacheKey(vm) {
+    const tenantContext = typeof tenantQS === "function" ? tenantQS() : "";
+    return [
+        vmmModernizationTarget,
+        tenantContext,
+        vm?.subscription_id || "",
+        vm?.region || "",
+        vm?.sku || "",
+    ].join("|");
+}
+
 async function vmmFetchTargetSkuRecommendations(vm) {
-    const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.region}|${vm.sku}`;
-    const cached = vmmSkuRecommendationCache.get(cacheKey);
-    if (cached) return cached;
+    const cacheKey = vmmGetRecommendationCacheKey(vm);
+    return vmmCachedLoad(vmmSkuRecommendationCache, cacheKey, async () => {
+        const candidates = vmmBuildCandidateTargetSkus(vm.sku);
+        if (!candidates.length) {
+            vmmSkuRecommendationIssues.set(cacheKey, []);
+            return [];
+        }
 
-    const candidates = vmmBuildCandidateTargetSkus(vm.sku);
-    if (!candidates.length) {
-        vmmSkuRecommendationCache.set(cacheKey, []);
-        return [];
-    }
+        const responses = await Promise.all(candidates.map(async (candidate) => {
+            const params = new URLSearchParams({
+                region: vm.region,
+                subscriptionId: vm.subscription_id,
+                name: candidate,
+                includePrices: "true",
+                currencyCode: "USD",
+            });
+            try {
+                const data = await apiFetch(`/api/skus?${params}${tenantQS("&")}`);
+                if (data?.error) throw new Error(data.error);
+                if (!Array.isArray(data)) throw new Error("Unexpected SKU response");
+                return {
+                    sku: data.find(
+                        (item) => String(item?.name || "").toLowerCase() === candidate.toLowerCase(),
+                    ),
+                    candidate,
+                };
+            } catch (error) {
+                return { candidate, error };
+            }
+        }));
 
-    const results = [];
-    for (const candidate of candidates) {
-        const params = new URLSearchParams({
-            region: vm.region,
-            subscriptionId: vm.subscription_id,
-            name: candidate,
-            includePrices: "true",
-            currencyCode: "USD",
+        const issues = responses
+            .filter((response) => response.error)
+            .map((response) => `Candidate ${response.candidate} could not be checked: ${String(response.error)}`);
+        vmmSkuRecommendationIssues.set(cacheKey, issues);
+        const results = responses.map((response) => response.sku).filter(Boolean);
+        results.sort((a, b) => {
+            const as = a?.confidence?.score ?? -1;
+            const bs = b?.confidence?.score ?? -1;
+            if (bs !== as) return bs - as;
+            const av = String(a?.name || "").toLowerCase().includes("_v7") ? 7 : 6;
+            const bv = String(b?.name || "").toLowerCase().includes("_v7") ? 7 : 6;
+            return bv - av;
         });
-        const data = await apiFetch(`/api/skus?${params}${tenantQS("&")}`);
-        if (data?.error || !Array.isArray(data)) continue;
-        const exact = data.find((s) => String(s.name || "").toLowerCase() === candidate.toLowerCase());
-        if (exact) results.push(exact);
-    }
-
-    results.sort((a, b) => {
-        const as = a?.confidence?.score ?? -1;
-        const bs = b?.confidence?.score ?? -1;
-        if (bs !== as) return bs - as;
-        const av = String(a?.name || "").toLowerCase().includes("_v7") ? 7 : 6;
-        const bv = String(b?.name || "").toLowerCase().includes("_v7") ? 7 : 6;
-        return bv - av;
+        return results.slice(0, 2);
     });
-    const top = results.slice(0, 2);
-    vmmSkuRecommendationCache.set(cacheKey, top);
-    return top;
 }
 
 async function vmmFetchTargetSkuDetail(vm, skuName, currency) {
-    const params = new URLSearchParams({
-        region: vm.region,
-        subscriptionId: vm.subscription_id,
-        sku: skuName,
-        currencyCode: currency,
+    const normalizedCurrency = String(currency || "USD").toUpperCase();
+    const tenantContext = typeof tenantQS === "function" ? tenantQS() : "";
+    const cacheKey = [
+        vmmModernizationTarget,
+        tenantContext,
+        vm?.subscription_id || "",
+        vm?.region || "",
+        skuName,
+        normalizedCurrency,
+    ].join("|");
+    return vmmCachedLoad(vmmSkuDetailCache, cacheKey, async () => {
+        const params = new URLSearchParams({
+            region: vm.region,
+            subscriptionId: vm.subscription_id,
+            sku: skuName,
+            currencyCode: normalizedCurrency,
+        });
+        const data = await apiFetch(`/api/sku-detail?${params}${tenantQS("&")}`);
+        if (!data || data.error) {
+            throw new Error(data?.error || `No detail returned for ${skuName}`);
+        }
+        return data;
     });
-    const data = await apiFetch(`/api/sku-detail?${params}${tenantQS("&")}`);
-    if (!data || data.error) {
-        throw new Error(data?.error || `No detail returned for ${skuName}`);
-    }
-    return data;
 }
 
 function vmmGetTargetSkuQuota(primarySku, detail) {
-    const quota = primarySku?.quota || detail?.quota || detail?.profile?.quota;
+    const quota = detail?.quota || detail?.profile?.quota || primarySku?.quota;
     return quota && typeof quota === "object"
         ? quota
         : { limit: null, used: null, remaining: null };
 }
 
+function vmmBuildDataNotice(message) {
+    return `
+        <div class="alert alert-warning py-2 small" role="status" aria-live="polite">
+            <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>${escapeHtml(message)}
+        </div>
+    `;
+}
+
+function vmmHasCapabilities(profile) {
+    return profile?.capabilities
+        && typeof profile.capabilities === "object"
+        && Object.keys(profile.capabilities).length > 0;
+}
+
+function vmmHasNumericValue(object, fields) {
+    return fields.some((field) => typeof object?.[field] === "number" && Number.isFinite(object[field]));
+}
+
+function vmmGetMissingNumericFields(object, fields) {
+    return fields.filter(
+        (entry) => {
+            const field = Array.isArray(entry) ? entry[0] : entry;
+            return typeof object?.[field] !== "number" || !Number.isFinite(object[field]);
+        },
+    );
+}
+
+function vmmGetPricingData(primarySku, detail) {
+    const detailPricing = detail?.pricing && typeof detail.pricing === "object"
+        ? detail.pricing
+        : detail;
+    const recommendationPricing = primarySku?.pricing || {};
+    const expectedCurrency = String(vmmCurrentDetailCurrency || "USD").toUpperCase();
+    const detailCurrency = detailPricing?.currency
+        ? String(detailPricing.currency).toUpperCase()
+        : expectedCurrency;
+    const recommendationCurrency = String(recommendationPricing.currency || "USD").toUpperCase();
+    const pricing = {
+        ...(recommendationCurrency === expectedCurrency ? recommendationPricing : {}),
+        ...(detailCurrency === expectedCurrency && detailPricing ? detailPricing : {}),
+        currency: expectedCurrency,
+    };
+    return pricing;
+}
+
 function vmmBuildTargetRecommendationSection(vm, targetSkus, detail = null) {
-    if (!targetSkus.length) {
+    if (!Array.isArray(targetSkus) || !targetSkus.length) {
         return `
             <div class="alert alert-secondary py-2 mb-0 mt-3">
                 No direct ${escapeHtml(vmmGetModernizationTargetLabel())} SKU recommendation was auto-matched for this VM.
@@ -2503,9 +2660,26 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus, detail = null) {
     const alternateSkus = targetSkus.slice(1);
     const confidence = primarySku.confidence || detail?.confidence;
     const primaryConfidence = vmmGetConfidenceDisplay(confidence);
-    const primaryProfile = detail?.profile || vmmBuildSharedVmProfile(primarySku);
+    const primaryProfile = vmmHasCapabilities(detail?.profile)
+        ? detail.profile
+        : vmmBuildSharedVmProfile(primarySku);
     const quota = vmmGetTargetSkuQuota(primarySku, detail);
     const vcpus = Number(primaryProfile.capabilities?.vCPUs || 0);
+    const profileCapabilities = detail?.profile?.capabilities;
+    const missingProfileFields = [
+        ["vCPUs", "vCPUs"],
+        ["MemoryGB", "memory"],
+    ].filter(([field]) => profileCapabilities?.[field] === undefined);
+    let profileNotice = "";
+    if (!vmmHasCapabilities(detail?.profile)) {
+        profileNotice = vmmBuildDataNotice(
+            "The detailed VM profile is unavailable or incomplete; showing the recommendation snapshot where possible.",
+        );
+    } else if (missingProfileFields.length) {
+        profileNotice = vmmBuildDataNotice(
+            `The detailed VM profile is partial; missing ${missingProfileFields.map(([, label]) => label).join(", ")}.`,
+        );
+    }
 
     const sharedConfidenceSection = confidence && vmmComponents.renderConfidenceBreakdown
         ? vmmComponents.renderConfidenceBreakdown(confidence)
@@ -2525,18 +2699,60 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus, detail = null) {
             </div>
         `;
 
-    const pricingData = detail || primarySku.pricing || {};
+    const pricingData = vmmGetPricingData(primarySku, detail);
+    const priceFields = [
+        ["paygo", "Pay-As-You-Go"],
+        ["spot", "Spot"],
+        ["ri_1y", "Reserved Instance 1Y"],
+        ["ri_3y", "Reserved Instance 3Y"],
+        ["sp_1y", "Savings Plan 1Y"],
+        ["sp_3y", "Savings Plan 3Y"],
+    ];
+    const missingPriceFields = vmmGetMissingNumericFields(pricingData, priceFields);
+    let pricingNotice = "";
+    if (!vmmHasNumericValue(
+        pricingData,
+        priceFields.map(([field]) => field),
+    )) {
+        pricingNotice = vmmBuildDataNotice(
+            `Pricing is unavailable for ${pricingData.currency}; no missing value is treated as zero.`,
+        );
+    } else if (missingPriceFields.length) {
+        pricingNotice = vmmBuildDataNotice(
+            `Pricing is partial for ${pricingData.currency}; unavailable values remain blank: ${missingPriceFields.map(([, label]) => label).join(", ")}.`,
+        );
+    }
     const sharedPricingSection = vmmComponents.renderPricingPanel
-        ? vmmComponents.renderPricingPanel(pricingData)
+        ? `${pricingNotice}${vmmComponents.renderPricingPanel(pricingData)}`
         : `
             <div class="vmm-target-block">
                 <h6><i class="bi bi-cash-coin me-1"></i>Pricing</h6>
+                ${pricingNotice}
                 ${vmmBuildPricingTable(primarySku)}
             </div>
         `;
+    const quotaFields = [
+        ["limit", "limit"],
+        ["used", "used"],
+        ["remaining", "remaining"],
+    ];
+    const missingQuotaFields = vmmGetMissingNumericFields(quota, quotaFields);
+    let quotaNotice = "";
+    if (missingQuotaFields.length === quotaFields.length) {
+        quotaNotice = vmmBuildDataNotice(
+            "Quota data is unavailable; deployment headroom and deployable instances cannot be calculated.",
+        );
+    } else if (missingQuotaFields.length) {
+        quotaNotice = vmmBuildDataNotice(
+            `Quota data is partial; missing ${missingQuotaFields.map(([, label]) => label).join(", ")}. Missing values are not inferred.`,
+        );
+    }
     const sharedQuotaSection = vmmComponents.renderQuotaPanel
-        ? vmmComponents.renderQuotaPanel(quota, vcpus, confidence)
-        : "";
+        ? `${quotaNotice}${vmmComponents.renderQuotaPanel(quota, vcpus, confidence)}`
+        : `${quotaNotice}
+            <div class="vmm-target-block mb-3">
+                <h6><i class="bi bi-speedometer me-1"></i>Quota</h6>
+            </div>`;
 
     const alternateSection = alternateSkus.length
         ? `
@@ -2566,6 +2782,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus, detail = null) {
             <div class="small text-body-secondary mb-3">
                 Source: <code>${escapeHtml(vm?.sku || "—")}</code> · ${escapeHtml(vm?.region || "—")}
             </div>
+            ${profileNotice}
             ${vmmComponents.renderVmProfile
                 ? vmmComponents.renderVmProfile(primaryProfile)
                 : vmmBuildFallbackVmProfile(vm, primarySku)}
@@ -2595,11 +2812,15 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus, detail = null) {
 
 async function vmmOpenVmDetail(vm) {
     if (!vm?.sku || !vm?.region) return;
+    const requestId = ++vmmDetailRequestId;
+    vmmLastDetailTrigger = document.activeElement;
     const modal = vmmEnsureDetailModal();
     if (!modal) return;
 
     vmmCurrentDetailVm = vm;
     vmmCurrentDetailTargetSkus = [];
+    vmmCurrentDetailSkuDetail = null;
+    vmmCurrentDetailIssues = [];
     vmmDetailStatusFilter = "all";
     vmmDetailActiveTab = "overview";
 
@@ -2616,26 +2837,52 @@ async function vmmOpenVmDetail(vm) {
 
     try {
         const cacheKey = `${vmmModernizationTarget}|${vm.subscription_id}|${vm.resource_group}|${vm.name}`;
-        const targetSkus = await vmmFetchTargetSkuRecommendations(vm);
-        vmmCurrentDetailTargetSkus = targetSkus;
-        vmmCurrentDetailCurrency = "USD";
-        vmmCurrentDetailSkuDetail = targetSkus.length
-            ? await vmmFetchTargetSkuDetail(vm, targetSkus[0].name, vmmCurrentDetailCurrency)
-            : null;
-        const cachedRecommendations = vmmDetailRecommendationCache.get(cacheKey);
-        if (cachedRecommendations) {
-            vmmRenderCurrentDetailContent(cachedRecommendations);
-            return;
+        if (!vmmDetailRecommendationCache.has(cacheKey)) {
+            vmmDetailRecommendationCache.set(cacheKey, vmmBuildRecommendations(vm));
         }
-        const recommendations = vmmBuildRecommendations(vm);
-        vmmDetailRecommendationCache.set(cacheKey, recommendations);
+        const targetSkus = await vmmFetchTargetSkuRecommendations(vm);
+        if (requestId !== vmmDetailRequestId || vm !== vmmCurrentDetailVm) return;
+        vmmCurrentDetailTargetSkus = targetSkus;
+        const recommendationIssues = vmmSkuRecommendationIssues.get(
+            vmmGetRecommendationCacheKey(vm),
+        ) || [];
+        vmmCurrentDetailIssues.push(...recommendationIssues.map((message) => ({
+            kind: "recommendation",
+            message,
+        })));
+        vmmCurrentDetailCurrency = "USD";
+        if (targetSkus.length) {
+            try {
+                const detail = await vmmFetchTargetSkuDetail(
+                    vm,
+                    targetSkus[0].name,
+                    vmmCurrentDetailCurrency,
+                );
+                if (requestId !== vmmDetailRequestId || vm !== vmmCurrentDetailVm) return;
+                vmmCurrentDetailSkuDetail = detail;
+            } catch (error) {
+                if (requestId !== vmmDetailRequestId || vm !== vmmCurrentDetailVm) return;
+                vmmCurrentDetailIssues.push({
+                    kind: "detail",
+                    message: `Target SKU detail could not be loaded: ${String(error)}`,
+                });
+            }
+        }
+        if (requestId !== vmmDetailRequestId || vm !== vmmCurrentDetailVm) return;
         vmmRenderCurrentDetailContent();
     } catch (err) {
-        contentEl.innerHTML = `<div class="text-danger small">Failed to build recommendations: ${escapeHtml(String(err))}</div>`;
-        contentEl.classList.remove("d-none");
+        if (requestId === vmmDetailRequestId) {
+            vmmCurrentDetailIssues.push({
+                kind: "recommendation",
+                message: `Target SKU recommendations could not be loaded: ${String(err)}`,
+            });
+            vmmRenderCurrentDetailContent();
+        }
     } finally {
-        loadingEl.classList.add("d-none");
-        vmmUpdateActionButtons();
+        if (requestId === vmmDetailRequestId) {
+            loadingEl.classList.add("d-none");
+            vmmUpdateActionButtons();
+        }
     }
 }
 
@@ -2653,8 +2900,10 @@ function vmmDiskBadge(controller) {
 }
 
 function vmmZonesBadge(zones) {
-    if (!zones || !zones.length) return '<span class="text-body-secondary">—</span>';
-    return zones.map(z => `<span class="badge bg-secondary me-1">${escapeHtml(String(z))}</span>`).join("");
+    if (!zones || !zones.length) {
+        return '<span class="text-body-secondary" role="status" aria-label="No explicit availability zone">—</span>';
+    }
+    return zones.map(z => `<span class="badge bg-secondary me-1" role="status" aria-label="Availability zone ${escapeHtml(String(z))}">${escapeHtml(String(z))}</span>`).join("");
 }
 
 function vmmRenderTable() {
@@ -2672,8 +2921,16 @@ function vmmRenderTable() {
 
     const countEl = document.getElementById("vmm-table-count");
     if (countEl) countEl.textContent = sorted.length;
+    document.querySelectorAll("#vmm-table thead th.sortable").forEach((header) => {
+        const isCurrent = header.dataset.sortField === vmmSortField;
+        header.setAttribute(
+            "aria-sort",
+            isCurrent ? (vmmSortAsc ? "ascending" : "descending") : "none",
+        );
+    });
 
-    tbody.innerHTML = sorted.map((v, i) => `<tr class="vmm-vm-row" tabindex="0"
+    tbody.innerHTML = sorted.map((v, i) => `<tr class="vmm-vm-row" tabindex="0" role="button"
+        aria-label="Open modernization details for ${escapeHtml(v.name || "Unknown")}"
         onclick="vmmOpenVmDetailByIndex(${i})"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();vmmOpenVmDetailByIndex(${i});}">
         <td class="text-nowrap">${escapeHtml(v.name || "Unknown")}</td>

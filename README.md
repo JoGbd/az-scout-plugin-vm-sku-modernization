@@ -76,6 +76,42 @@ record. Publisher classification is intentionally conservative: only publishers
 whose name begins with `Microsoft` are treated as first-party; Canonical and all
 other publishers remain third-party for planning purposes.
 
+## VM detail modal data flow
+
+1. Selecting a keyboard-focusable inventory row opens the plugin modal and builds
+   workload recommendations from the VM inventory record.
+2. The plugin derives v5 or v6/v7 candidate names, then queries `/api/skus` for
+   candidates in parallel. Results are cached for five minutes per tenant,
+   subscription, region, source SKU, and modernization target.
+3. The highest-confidence candidate is passed to `/api/sku-detail`. The response
+   supplies the shared **VM Profile**, **Zone Availability**, **Quota**, **Basic
+   Deployment Confidence**, and **Pricing** renderers.
+4. Detail responses are cached for five minutes per candidate **and currency**.
+   Changing the currency performs (or reuses) the matching currency request;
+   an older in-flight response cannot replace the newly selected currency.
+5. A failed or partial profile, quota, or pricing response does not hide the
+   workload recommendations. The modal identifies unavailable values explicitly
+   and uses the `/api/skus` snapshot only where it contains usable data.
+
+Caches are cleared when inventory or modernization target changes. Live Azure
+capacity, quota, and retail prices can change during the cache window and must be
+revalidated before deployment.
+
+## Score limits
+
+**Basic Deployment Confidence** is an indicative ranking signal, not a deployment
+guarantee. It combines the signals returned by az-scout (for example SKU match,
+quota pressure, zones, restrictions, and pricing pressure), excludes missing
+signals, and can become blocked when a hard constraint is detected. It does not
+prove instantaneous capacity, application compatibility, image support,
+performance, reservation eligibility, or successful migration.
+
+The separate **Migration Effort** badge is a deterministic planning heuristic
+based on the inventory fields available to this plugin: Hyper-V generation, disk
+controller, security profile, publisher, and hibernation. Missing fields are
+handled conservatively. Neither score replaces a pilot, the Advanced check,
+subscription quota validation, or workload-owner review.
+
 ## Quality checks
 
 ```bash
@@ -83,6 +119,7 @@ uv run ruff check src/ tests/
 uv run ruff format --check src/ tests/
 uv run mypy src/
 uv run pytest
+node --test tests/frontend/vm-sku-modernization.test.js
 ```
 
 ## Publish and submit to catalog
