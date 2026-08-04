@@ -1680,7 +1680,7 @@ function vmmGetReadinessAssessment(vm) {
     return {
         level,
         badgeClass,
-        tooltip: `${level} readiness. Basis: ${factors.join("; ")}.`,
+        tooltip: `${level} migration effort. Basis: ${factors.join("; ")}.`,
     };
 }
 
@@ -2766,7 +2766,7 @@ function vmmExportCSV() {
         "Modernization Target", "Modernization Scope",
         "VM Name", "Resource Group", "Subscription", "Subscription ID",
         "Region", "SKU", "Hyper-V Generation", "OS Type", "Image Publisher",
-        "Disk Controller", "Zones", "Migration Readiness (inferred)",
+        "Disk Controller", "Zones", "Migration Effort (inferred)",
     ];
     const rows = vmmSortedVms().map(v => [
         vmmGetModernizationTargetLabel(),
