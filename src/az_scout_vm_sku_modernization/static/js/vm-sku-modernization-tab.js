@@ -2145,8 +2145,6 @@ function vmmBuildOverviewSectionHtml(vm) {
             valueClass: "text-warning-emphasis",
             icon: "bi-exclamation-triangle",
             description: "Actions that already show a remediation gap.",
-            items: model.blockers,
-            emptyLabel: "No blockers currently detected.",
         },
         {
             label: "Scriptable checks",
@@ -2154,8 +2152,6 @@ function vmmBuildOverviewSectionHtml(vm) {
             valueClass: "text-info-emphasis",
             icon: "bi-terminal",
             description: "Checks that can be advanced with a script or Advanced check.",
-            items: model.scriptableChecks,
-            emptyLabel: "No remaining scriptable checks.",
         },
         {
             label: "Human validations",
@@ -2163,8 +2159,6 @@ function vmmBuildOverviewSectionHtml(vm) {
             valueClass: "text-body-emphasis",
             icon: "bi-person-check",
             description: "Items requiring operator or workload-owner review.",
-            items: model.humanValidations,
-            emptyLabel: "No remaining human validations.",
         },
     ];
 
@@ -2183,7 +2177,7 @@ function vmmBuildOverviewSectionHtml(vm) {
                         ><i class="bi bi-info-circle" aria-hidden="true"></i></span>
                     </div>
                     <div class="vmm-wave-card-value ${card.valueClass}">${card.value}</div>
-                    <div class="small text-body-secondary">See details below</div>
+                    <div class="small text-body-secondary">Open the Details tab for actions</div>
                 </article>
             `).join("")}
             <article class="vmm-wave-card">
@@ -2192,21 +2186,6 @@ function vmmBuildOverviewSectionHtml(vm) {
                 <div class="small text-body-secondary mt-2">Pilot-ready means no blockers and no remaining validation items.</div>
             </article>
         </div>
-        <details class="vmm-overview-details mt-3">
-            <summary class="btn btn-sm btn-outline-secondary">
-                <i class="bi bi-list-check me-1" aria-hidden="true"></i>Afficher les détails
-            </summary>
-            <div class="row g-3 mt-1">
-                ${overviewCards.map((card) => `
-                    <div class="col-lg-4">
-                        <section class="vmm-wave-detail-card">
-                            <h6><i class="bi ${card.icon} me-1" aria-hidden="true"></i>${card.label}</h6>
-                            ${vmmBuildSummaryList(card.items, card.emptyLabel)}
-                        </section>
-                    </div>
-                `).join("")}
-            </div>
-        </details>
     `;
 }
 

@@ -629,16 +629,6 @@
     border-radius: 50%;
 }
 
-.vmm-overview-details > summary {
-    list-style: none;
-    display: inline-block;
-    cursor: pointer;
-}
-
-.vmm-overview-details > summary::-webkit-details-marker {
-    display: none;
-}
-
 .vmm-wave-detail-card h6 {
     margin-bottom: 0.65rem;
 }
