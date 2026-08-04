@@ -2277,6 +2277,56 @@ function vmmBuildConfidenceInfo() {
     `;
 }
 
+function vmmProfileValue(value, fallback = "—") {
+    if (value === undefined || value === null || value === "") return fallback;
+    if (Array.isArray(value)) return value.length ? value.join(", ") : fallback;
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return String(value);
+}
+
+function vmmBuildProfileRow(label, value) {
+    return `
+        <div class="vm-profile-row">
+            <span class="vm-profile-label">${escapeHtml(label)}</span>
+            <strong>${escapeHtml(vmmProfileValue(value))}</strong>
+        </div>
+    `;
+}
+
+function vmmBuildTargetVmProfile(vm, sku) {
+    const capabilities = sku?.capabilities || {};
+    const zones = Array.isArray(sku?.zones) ? sku.zones : [];
+    const restrictions = Array.isArray(sku?.restrictions)
+        ? sku.restrictions.filter((restriction) => restriction?.type === "Zone")
+        : [];
+    const vcpus = capabilities.vcpus ?? capabilities.vCPUs ?? capabilities.vcpu ?? sku?.vcpus;
+    const memory = capabilities.memoryInMB ?? capabilities.memoryMB ?? capabilities.memory ?? sku?.memoryInMB;
+    const architecture = capabilities.architecture ?? capabilities.cpuArchitecture ?? sku?.architecture;
+
+    return `
+        <div class="vm-profile-grid mb-3">
+            <section class="vm-profile-card">
+                <div class="vm-profile-card-title">
+                    <i class="bi bi-display me-1" aria-hidden="true"></i>VM Profile
+                </div>
+                ${vmmBuildProfileRow("Target SKU", sku?.name)}
+                ${vmmBuildProfileRow("Region", vm?.region)}
+                ${vmmBuildProfileRow("Source SKU", vm?.sku)}
+                ${vmmBuildProfileRow("Zones", zones.length ? zones : "Regional")}
+            </section>
+            <section class="vm-profile-card">
+                <div class="vm-profile-card-title">
+                    <i class="bi bi-cpu me-1" aria-hidden="true"></i>Target capabilities
+                </div>
+                ${vmmBuildProfileRow("vCPUs", vcpus)}
+                ${vmmBuildProfileRow("Memory", memory !== undefined ? `${memory} MB` : undefined)}
+                ${vmmBuildProfileRow("Architecture", architecture)}
+                ${vmmBuildProfileRow("Zone restrictions", restrictions.length || "None")}
+            </section>
+        </div>
+    `;
+}
+
 function vmmGetZonesDisplay(sku) {
     const zones = Array.isArray(sku?.zones) ? sku.zones : [];
     const restrictions = Array.isArray(sku?.restrictions)
@@ -2445,9 +2495,7 @@ function vmmBuildTargetRecommendationSection(vm, targetSkus) {
                 </div>
                 <div>${primaryConfidence}</div>
             </div>
-            <div class="small text-body-secondary mb-3">
-                Target region <strong>${escapeHtml(vm.region || "")}</strong> · Source SKU <code>${escapeHtml(vm.sku || "")}</code>
-            </div>
+            ${vmmBuildTargetVmProfile(vm, primarySku)}
             ${sharedConfidenceSection}
             ${sharedZoneSection}
             ${sharedPricingSection}
