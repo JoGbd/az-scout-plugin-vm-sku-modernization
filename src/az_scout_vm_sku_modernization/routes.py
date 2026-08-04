@@ -108,7 +108,7 @@ def _build_vm_record(
         "os_type": os_disk.get("osType", ""),
         "image_publisher": image_ref.get("publisher", ""),
         "disk_controller_type": os_disk.get("diskControllerType", "SCSI"),
-        "zones": vm.get("zones") or [],
+        "zones": vm.get("zones") if isinstance(vm.get("zones"), list) else [],
         # Security profile
         "security_type": security_profile.get("securityType", "Standard"),
         "secure_boot_enabled": uefi_settings.get("secureBootEnabled", False),
@@ -159,8 +159,23 @@ def _fetch_vms_for_subscription(
         return []
 
     records: list[dict[str, Any]] = []
-    for vm in vms:
+    for vm in vms or []:
+        if not isinstance(vm, dict):
+            message = f"Subscription {sub_id} returned a malformed VM record — skipping"
+            logger.warning(message)
+            if warnings is not None:
+                warnings.append(message)
+            continue
         props = vm.get("properties") or {}
+        if not isinstance(props, dict):
+            message = (
+                f"VM {vm.get('name') or '<unknown>'} in subscription {sub_id} "
+                "has malformed properties — skipping"
+            )
+            logger.warning(message)
+            if warnings is not None:
+                warnings.append(message)
+            continue
         vm_size = (props.get("hardwareProfile") or {}).get("vmSize") or ""
         if _is_migration_candidate(vm_size, modernization_target):
             records.append(_build_vm_record(vm, sub_id, sub_name))
@@ -199,7 +214,11 @@ async def get_migration_vms(
     warnings: list[str] = []
     try:
         all_subs = await asyncio.to_thread(azure_api.list_subscriptions, tenantId)
-        known_subs = {s["id"]: s.get("name", s["id"]) for s in all_subs if s.get("id")}
+        known_subs = {
+            str(s["id"]): str(s.get("name") or s["id"])
+            for s in all_subs
+            if isinstance(s, dict) and s.get("id")
+        }
     except Exception as exc:
         logger.debug("Could not resolve subscription names — using IDs as names")
         warnings.append(f"Could not resolve subscription names: {exc}")
@@ -241,18 +260,35 @@ def _fetch_vm_deep_check(
     result: dict[str, Any] = {"warnings": []}
 
     # Power state from instanceView statuses
+    if not isinstance(vm_data, dict):
+        result["warnings"].append("ARM returned a malformed VM response")
+        vm_data = {}
     vm_props = vm_data.get("properties") or {}
+    if not isinstance(vm_props, dict):
+        result["warnings"].append("ARM returned malformed VM properties")
+        vm_props = {}
     instance_view = vm_props.get("instanceView") or {}
-    statuses = instance_view.get("statuses", [])
+    if not isinstance(instance_view, dict):
+        result["warnings"].append("ARM returned a malformed instance view")
+        instance_view = {}
+    statuses = instance_view.get("statuses") or []
     power_code = next(
-        (s.get("code", "") for s in statuses if s.get("code", "").startswith("PowerState/")),
+        (
+            str(status.get("code") or "")
+            for status in statuses
+            if isinstance(status, dict) and str(status.get("code") or "").startswith("PowerState/")
+        ),
         "PowerState/unknown",
     )
     result["power_state"] = power_code.removeprefix("PowerState/")
     result["is_hibernated"] = power_code == "PowerState/hibernated"
 
     # NIC accelerated networking (check up to 3 NICs)
-    nics = (vm_props.get("networkProfile") or {}).get("networkInterfaces") or []
+    network_profile = vm_props.get("networkProfile") or {}
+    if not isinstance(network_profile, dict):
+        result["warnings"].append("ARM returned a malformed network profile")
+        network_profile = {}
+    nics = network_profile.get("networkInterfaces") or []
     nic_ids = [nic.get("id", "") for nic in nics if isinstance(nic, dict) and nic.get("id")]
     accel_results: list[bool] = []
     for nic_id in nic_ids[:3]:
@@ -262,9 +298,10 @@ def _fetch_vm_deep_check(
                 params={"api-version": _NIC_API_VERSION},
                 tenant_id=tenant_id,
             )
-            accel_results.append(
-                bool(nic_data.get("properties", {}).get("enableAcceleratedNetworking", False))
-            )
+            nic_properties = nic_data.get("properties") if isinstance(nic_data, dict) else None
+            if not isinstance(nic_properties, dict):
+                raise ValueError("ARM returned malformed NIC properties")
+            accel_results.append(bool(nic_properties.get("enableAcceleratedNetworking", False)))
         except Exception as exc:
             message = f"Could not check NIC {nic_id}: {exc}"
             logger.warning("%s — skipping", message)
