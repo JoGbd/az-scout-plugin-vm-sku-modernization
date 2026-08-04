@@ -2249,10 +2249,10 @@ function vmmBuildCandidateTargetSkus(currentSku) {
 
 function vmmGetConfidenceDisplay(confidence) {
     if (vmmComponents.renderConfidenceBadge) {
-        return vmmComponents.renderConfidenceBadge(confidence, { tooltip: false });
+        return vmmComponents.renderConfidenceBadge(confidence, { tooltip: true });
     }
     if (!confidence || typeof confidence.score !== "number") {
-        return '<span class="badge bg-secondary">Unknown</span>';
+        return '<span class="badge bg-secondary" title="Basic Deployment Confidence is unavailable.">Unknown</span>';
     }
     const score = Math.round(confidence.score);
     const label = String(confidence.label || "Unknown");
@@ -2261,7 +2261,7 @@ function vmmGetConfidenceDisplay(confidence) {
     else if (score >= 60) cls = "bg-primary";
     else if (score >= 40) cls = "bg-warning text-dark";
     else cls = "bg-danger";
-    return `<span class="badge ${cls}">${escapeHtml(label)} (${score})</span>`;
+    return `<span class="badge ${cls}" title="Basic Deployment Confidence: ${escapeHtml(label)} (${score}/100).">${escapeHtml(label)} (${score})</span>`;
 }
 
 function vmmGetZonesDisplay(sku) {
