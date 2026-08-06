@@ -116,7 +116,6 @@ source = { editable = "." }
 dependencies = [
     { name = "az-scout" },
     { name = "fastapi" },
-    { name = "mcp", extra = ["cli"] },
 ]
 
 [package.dev-dependencies]
@@ -132,7 +131,6 @@ dev = [
 requires-dist = [
     { name = "az-scout" },
     { name = "fastapi" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.9,<2" },
 ]
 
 [package.metadata.requires-dev]
